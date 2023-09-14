@@ -2,7 +2,7 @@ from datetime import timedelta, datetime
 import json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from flask_jwt_extended import create_access_token, jwt_required, JWTManager
+from flask_jwt_extended import create_access_token, jwt_required, JWTManager, get_jwt_identity
 from sqlalchemy import create_engine, text, exc
 from passlib.hash import bcrypt
 from forms import *
@@ -170,21 +170,29 @@ def login():
 
 
 @app.route('/')
+@jwt_required()
 def hello_world():
-    try:
-        with engine.connect() as conn:
-            query = text("SELECT COUNT(username) FROM user_data")
-            result = conn.execute(query)
-            result_string = f"Ma'lumotlar omborida {result.scalar()} ta foydalanuvchi mavjud."
-            return result_string, 200
-    except exc.StatementError as e:
-            conn.rollback()
-            return str(e), 400
+    current_user = get_jwt_identity()
+    print(type(current_user))
+    hq = text("SELECT * FROM user_data WHERE username = :current_user")
+    result = conn.execute(hq, current_user).fetchone()
+    if result.role != 'admin':
+        return 'Invalid token'
+    with engine.connect() as conn:
+        query2 = text("SELECT COUNT(username) FROM user_data")
+        result2 = conn.execute(query2)
+        result_string = f"Ma'lumotlar omborida {result2.scalar()} ta foydalanuvchi mavjud."
+        return result_string, 200
 
 
 @app.route('/user/<id>', methods=['PATCH', 'GET', 'DELETE'])
 @jwt_required()
 def user_id(id: int):
+    # current_user = get_jwt_identity()
+    # query1 = text(f"SELECT * FROM user_data WHERE username={current_user}")
+    # result1 = conn.execute(query1)
+    # if result1 != 'admin':
+    #     return 'Invalid token'
     if request.method == 'GET':
         try:
             user = conn.execute(text(f"SELECT * FROM user_data WHERE id={id}")).fetchone()
@@ -500,11 +508,14 @@ def chatroom():
             # Формируем список сообщений
             messages = []
             for row in result:
+                timestamp = row[3]
+                formatted_timestamp = timestamp.strftime("(%Y-%m-%d) %H:%M")
+                print(formatted_timestamp)
                 message = {
                     'sender_id': row[0],
                     'receiver_id': row[1],
                     'message': row[2],
-                    'timestamp': row[3]
+                    'timestamp': formatted_timestamp
                 }
                 messages.append(message)
             return jsonify(messages), 200
