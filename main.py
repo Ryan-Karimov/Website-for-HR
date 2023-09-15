@@ -174,10 +174,10 @@ def login():
 def hello_world():
     current_user = get_jwt_identity()
     print(type(current_user))
-    hq = text("SELECT * FROM user_data WHERE username = :current_user")
-    result = conn.execute(hq, current_user).fetchone()
-    if result.role != 'admin':
-        return 'Invalid token'
+    # hq = text("SELECT * FROM user_data WHERE username = :current_user")
+    # result = conn.execute(hq, current_user).fetchone()
+    # if result.role != 'admin':
+    #     return 'Invalid token'
     with engine.connect() as conn:
         query2 = text("SELECT COUNT(username) FROM user_data")
         result2 = conn.execute(query2)
@@ -445,34 +445,47 @@ def stat():
 
 
 @app.route('/chat/<id>', methods=['GET', 'POST'])
-@jwt_required()
+# @jwt_required()
 def chat(id: int):
     if request.method == 'GET':
         try:
             chat_users = []
             user_id_to_exclude = id
-            query = text("SELECT username, profile_photo, id FROM user_data WHERE id != :user_id_to_exclude")
-            query = query.bindparams(user_id_to_exclude=user_id_to_exclude)
-            users = conn.execute(query).fetchall()
+            query = text("""
+                SELECT u.username, u.profile_photo, u.id, COUNT(m.id) as unread_msg
+                FROM user_data u
+                LEFT JOIN messages m ON u.id = m.sender_id AND m.receiver_id = :user_id AND m.is_read = false
+                WHERE u.id != :user_id_to_exclude
+                GROUP BY u.username, u.profile_photo, u.id;
+            """)
+            params = {'user_id': user_id_to_exclude, 'user_id_to_exclude': user_id_to_exclude}
+            result = conn.execute(query, params).fetchall()
 
-
-            for row in users:
-                photo = change_aspect_ratio_and_encode(row[1], 16/9)
-                chat_users.append({"username": str(row[0]), "profile_photo": photo, "id": row[2]})
+            for row in result:
+                username, profile_photo, user_id, unread_msg = row
+                photo = change_aspect_ratio_and_encode(profile_photo, 16/9)
+                user_data = {
+                    "username": str(username),
+                    "profile_photo": photo,
+                    "id": user_id,
+                    "unread_msg": unread_msg
+                }
+                chat_users.append(user_data)
             return jsonify(chat_users)
+
         except exc.StatementError as e:
             conn.rollback()
             return str(e), 400
     if request.method == 'POST':
         data = request.json
         try:
-            if 'message_text' in data:
-                stmt = text("INSERT INTO messages (sender_id, receiver_id, message_text) VALUES (:sender_id, :receiver_id, :message_text)")
-                params = {'sender_id': id, 'receiver_id': data['receiver_id'], 'message_text': data['message_text']}
-                a = conn.execute(stmt, params)
-                conn.commit()
-                return "Message sent successfully", 200
-            elif 'username' in data:
+            # if 'message_text' in data:
+            #     stmt = text("INSERT INTO messages (sender_id, receiver_id, message_text) VALUES (:sender_id, :receiver_id, :message_text)")
+            #     params = {'sender_id': id, 'receiver_id': data['receiver_id'], 'message_text': data['message_text']}
+            #     a = conn.execute(stmt, params)
+            #     conn.commit()
+            #     return "Message sent successfully", 200
+            if 'username' in data:
                 username = data['username']
                 query = text(f"SELECT profile_photo, id FROM user_data WHERE username='{username}'")
                 user_data = conn.execute(query).fetchone()
@@ -496,7 +509,7 @@ def chatroom():
         user_2 = request.args.get('user_id2')
         try:
             query = text("""
-                SELECT sender_id, receiver_id, message_text, timestamp
+                SELECT id, sender_id, receiver_id, message_text, timestamp
                 FROM messages
                 WHERE (sender_id = :user_id1 AND receiver_id = :user_id2)
                 OR (sender_id = :user_id2 AND receiver_id = :user_id1)
@@ -508,13 +521,14 @@ def chatroom():
             # Формируем список сообщений
             messages = []
             for row in result:
-                timestamp = row[3]
+                timestamp = row[4]
                 formatted_timestamp = timestamp.strftime("(%Y-%m-%d) %H:%M")
                 print(formatted_timestamp)
                 message = {
-                    'sender_id': row[0],
-                    'receiver_id': row[1],
-                    'message': row[2],
+                    'msg_id': row[0],
+                    'sender_id': row[1],
+                    'receiver_id': row[2],
+                    'message': row[3],
                     'timestamp': formatted_timestamp
                 }
                 messages.append(message)
@@ -522,6 +536,14 @@ def chatroom():
         except exc.StatementError as e:
                 conn.rollback()
                 return str(e), 400
+        
+
+@app.route('/chat/msg', methods=['POST'])
+@jwt_required()
+def chat_msg():
+    data = request.json()
+    return data
+
 
 @socketio.on('connect')
 def handle_connect():
@@ -536,12 +558,21 @@ def send_message(data):
     receiver_id = data['receiver_id']
     message = data['message']
 
+    query = text("""
+        UPDATE messages
+        SET is_read = true
+        WHERE sender_id = :sender_id AND receiver_id = :receiver_id;
+    """)
+    params = {'sender_id': receiver_id, 'receiver_id': sender_id}
+    conn.execute(query, params)
+    conn.commit()
+
     # Сохраняем сообщение в базе данных
     query1 = text("""
-        INSERT INTO messages (sender_id, receiver_id, message_text)
-        VALUES (:sender_id, :receiver_id, :message_text)
+        INSERT INTO messages (sender_id, receiver_id, message_text, is_read)
+        VALUES (:sender_id, :receiver_id, :message_text, :is_read)
     """)
-    params1 = {'sender_id': sender_id, 'receiver_id': receiver_id, 'message_text': message}
+    params1 = {'sender_id': sender_id, 'receiver_id': receiver_id, 'message_text': message, 'is_read': False}
     conn.execute(query1, params1)
     conn.commit()
 
