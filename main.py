@@ -509,7 +509,7 @@ def chatroom():
         user_2 = request.args.get('user_id2')
         try:
             query = text("""
-                SELECT id, sender_id, receiver_id, message_text, timestamp
+                SELECT id, sender_id, receiver_id, message_text, timestamp, is_read
                 FROM messages
                 WHERE (sender_id = :user_id1 AND receiver_id = :user_id2)
                 OR (sender_id = :user_id2 AND receiver_id = :user_id1)
@@ -523,13 +523,13 @@ def chatroom():
             for row in result:
                 timestamp = row[4]
                 formatted_timestamp = timestamp.strftime("(%Y-%m-%d) %H:%M")
-                print(formatted_timestamp)
                 message = {
                     'msg_id': row[0],
                     'sender_id': row[1],
                     'receiver_id': row[2],
                     'message': row[3],
-                    'timestamp': formatted_timestamp
+                    'timestamp': formatted_timestamp,
+                    'is_read': row[5]
                 }
                 messages.append(message)
             return jsonify(messages), 200
@@ -541,8 +541,9 @@ def chatroom():
 @app.route('/chat/msg', methods=['POST'])
 @jwt_required()
 def chat_msg():
-    data = request.json()
-    return data
+    data = request.json
+    print(data)
+    return "OK"
 
 
 @socketio.on('connect')
@@ -578,7 +579,7 @@ def send_message(data):
 
     # Извлекаем сообщения из базы данных для отображения в чате
     query2 = text("""
-        SELECT sender_id, receiver_id, message_text, timestamp
+        SELECT id, sender_id, receiver_id, message_text, timestamp, is_read
         FROM messages
         WHERE (sender_id = :user_id1 AND receiver_id = :user_id2)
         OR (sender_id = :user_id2 AND receiver_id = :user_id1)
@@ -590,10 +591,12 @@ def send_message(data):
     messages = []
     for row in result:
         message = {
-            'message': row[2],
-            'sender_id': row[0],
-            'receiver_id': row[1],
-            'timestamp': str(row[3])
+            'msg_id': row[0],
+            'message': row[3],
+            'sender_id': row[1],
+            'receiver_id': row[2],
+            'timestamp': str(row[4]),
+            'is_read': row[5]
         }
         messages.append(message)
     socketio.emit('message', messages)
