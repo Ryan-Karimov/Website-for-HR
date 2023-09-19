@@ -170,10 +170,10 @@ def login():
 
 
 @app.route('/')
-@jwt_required()
+# @jwt_required()
 def hello_world():
-    current_user = get_jwt_identity()
-    print(type(current_user))
+    # current_user = get_jwt_identity()
+    # print(type(current_user))
     # hq = text("SELECT * FROM user_data WHERE username = :current_user")
     # result = conn.execute(hq, current_user).fetchone()
     # if result.role != 'admin':
@@ -543,6 +543,23 @@ def chatroom():
 def chat_msg():
     data = request.json
     print(data)
+    sender_id = data['sender_id']
+    receiver_id = data['receiver_id']
+    msg_id = data['msg_id']
+
+    try:
+        query = text("""
+            UPDATE messages
+            SET is_read = true
+            WHERE sender_id = :sender_id AND receiver_id = :receiver_id AND message_text = :msg_id;
+        """)
+        params = {'sender_id': receiver_id, 'receiver_id': sender_id, 'msg_id': msg_id}
+        conn.execute(query, params)
+        conn.commit()
+    
+    except exc as e:
+        conn.rollback()
+        return str(e)
     return "OK"
 
 
