@@ -445,46 +445,11 @@ def stat():
 
 
 @app.route('/chat/<id>', methods=['GET', 'POST'])
-# @jwt_required()
+@jwt_required()
 def chat(id: int):
-    if request.method == 'GET':
-        try:
-            chat_users = []
-            user_id_to_exclude = id
-            query = text("""
-                SELECT u.username, u.profile_photo, u.id, COUNT(m.id) as unread_msg
-                FROM user_data u
-                LEFT JOIN messages m ON u.id = m.sender_id AND m.receiver_id = :user_id AND m.is_read = false
-                WHERE u.id != :user_id_to_exclude
-                GROUP BY u.username, u.profile_photo, u.id;
-            """)
-            params = {'user_id': user_id_to_exclude, 'user_id_to_exclude': user_id_to_exclude}
-            result = conn.execute(query, params).fetchall()
-
-            for row in result:
-                username, profile_photo, user_id, unread_msg = row
-                photo = change_aspect_ratio_and_encode(profile_photo, 16/9)
-                user_data = {
-                    "username": str(username),
-                    "profile_photo": photo,
-                    "id": user_id,
-                    "unread_msg": unread_msg
-                }
-                chat_users.append(user_data)
-            return jsonify(chat_users)
-
-        except exc.StatementError as e:
-            conn.rollback()
-            return str(e), 400
     if request.method == 'POST':
         data = request.json
         try:
-            # if 'message_text' in data:
-            #     stmt = text("INSERT INTO messages (sender_id, receiver_id, message_text) VALUES (:sender_id, :receiver_id, :message_text)")
-            #     params = {'sender_id': id, 'receiver_id': data['receiver_id'], 'message_text': data['message_text']}
-            #     a = conn.execute(stmt, params)
-            #     conn.commit()
-            #     return "Message sent successfully", 200
             if 'username' in data:
                 username = data['username']
                 query = text(f"SELECT profile_photo, id FROM user_data WHERE username='{username}'")
@@ -536,31 +501,6 @@ def chatroom():
         except exc.StatementError as e:
                 conn.rollback()
                 return str(e), 400
-        
-
-@app.route('/chat/msg', methods=['POST'])
-@jwt_required()
-def chat_msg():
-    data = request.json
-    print(data)
-    sender_id = data['sender_id']
-    receiver_id = data['receiver_id']
-    msg_id = data['msg_id']
-
-    try:
-        query = text("""
-            UPDATE messages
-            SET is_read = true
-            WHERE sender_id = :sender_id AND receiver_id = :receiver_id AND message_text = :msg_id;
-        """)
-        params = {'sender_id': receiver_id, 'receiver_id': sender_id, 'msg_id': msg_id}
-        conn.execute(query, params)
-        conn.commit()
-    
-    except exc as e:
-        conn.rollback()
-        return str(e)
-    return "OK"
 
 
 @socketio.on('connect')
@@ -568,6 +508,7 @@ def handle_connect():
     print('CONNECTED')
     user_id = request.args.get('user_id')
     socketio.emit('connected', {'user_id': user_id})
+    
 
 
 @socketio.on('message')
@@ -575,6 +516,7 @@ def send_message(data):
     sender_id = data['sender_id']
     receiver_id = data['receiver_id']
     message = data['message']
+    print(data)
 
     query = text("""
         UPDATE messages
@@ -607,19 +549,104 @@ def send_message(data):
 
     messages = []
     for row in result:
+        timestamp = row[4]
+        formatted_timestamp = timestamp.strftime("(%Y-%m-%d) %H:%M")
         message = {
             'msg_id': row[0],
             'message': row[3],
             'sender_id': row[1],
             'receiver_id': row[2],
-            'timestamp': str(row[4]),
+            'timestamp': formatted_timestamp,
             'is_read': row[5]
         }
         messages.append(message)
     socketio.emit('message', messages)
 
+
+@socketio.on('new_message')
+def chat_msg(data):
+    print("NEW MESSAGE")
+    sender_id = data['sender_id']
+    receiver_id = data['receiver_id']
+    msg_id = data['msg_id']
+    print(data)
+
+    try:
+        query = text("""
+            UPDATE messages
+            SET is_read = TRUE
+            WHERE sender_id = :sender_id AND receiver_id = :receiver_id AND id = :msg_id;
+        """)
+        params = {'sender_id': sender_id, 'receiver_id': receiver_id, 'msg_id': msg_id}
+        conn.execute(query, params)
+        conn.commit()
+
+        query = text("""
+            SELECT id, sender_id, receiver_id, message_text, timestamp, is_read
+            FROM messages
+            WHERE (sender_id = :user_id1 AND receiver_id = :user_id2)
+            OR (sender_id = :user_id2 AND receiver_id = :user_id1)
+            ORDER BY timestamp
+        """)
+        params = {'user_id1': sender_id, 'user_id2': receiver_id}
+        result = conn.execute(query, params).fetchall()
+
+        messages = []
+        for row in result:
+            timestamp = row[4]
+            formatted_timestamp = timestamp.strftime("(%Y-%m-%d) %H:%M")
+            message = {
+                'msg_id': row[0],
+                'message': row[3],
+                'sender_id': row[1],
+                'receiver_id': row[2],
+                'timestamp': formatted_timestamp,
+                'is_read': row[5]
+            }
+            messages.append(message)
+        socketio.emit('new_message', messages)
+    
+    except exc as e:
+        conn.rollback()
+        return str(e)
+    return "OK"
+
+
+@socketio.on('count')
+def chat_count(data):
+    try:
+        chat_users = []
+        print(chat_users)
+        user_id_to_exclude = data['id']
+        query = text("""
+            SELECT u.username, u.profile_photo, u.id, COUNT(m.id) as unread_msg
+            FROM user_data u
+            LEFT JOIN messages m ON u.id = m.sender_id AND m.receiver_id = :user_id AND m.is_read = false
+            WHERE u.id != :user_id_to_exclude
+            GROUP BY u.username, u.profile_photo, u.id;
+        """)
+        params = {'user_id': user_id_to_exclude, 'user_id_to_exclude': user_id_to_exclude}
+        result = conn.execute(query, params).fetchall()
+
+        for row in result:
+            username, profile_photo, user_id, unread_msg = row
+            photo = change_aspect_ratio_and_encode(profile_photo, 16/9)
+            user_data = {
+                "username": str(username),
+                # "profile_photo": photo,
+                "id": user_id,
+                "unread_msg": unread_msg
+            }
+            chat_users.append(user_data)
+        socketio.emit('count', chat_users)
+        # return jsonify(chat_users)
+
+    except exc.StatementError as e:
+        conn.rollback()
+        return str(e), 400
+
 @socketio.on('disconnect')
-def handle_connect():
+def handle_disconnect():
     print('DISCONNECTED')
     user_id = request.args.get('user_id')
     socketio.emit('connected')
