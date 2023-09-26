@@ -27,7 +27,7 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=10)
 jwt = JWTManager(app)
 mail = Mail(app)
 # socketio = SocketIO(app, cors_allowed_origins="*")
-socketio = SocketIO(app=app, engineio_logger=True, cors_allowed_origins="*")
+socketio = SocketIO(app=app, engineio_logger=True, cors_allowed_origins="*", logger=True)
 # socketio = SocketIO(app)
 CORS(app, resources={r"/socket.io/*": {"origins": "http://localhost:5173"}})
 engine = create_engine(database)
@@ -464,6 +464,22 @@ def chat(id: int):
         except exc.StatementError as e:
             conn.rollback()
             return str(e), 400
+    if request.method == 'GET':
+        query1 = text(f"SELECT profile_photo, id, username FROM user_data WHERE id != :user_id")
+        params = {'user_id': id}
+        result = conn.execute(query1, params).fetchall()
+
+        messages = []
+        for row in result:
+            profile_photo = change_aspect_ratio_and_encode(row[0], 16/9)
+            message = {
+                'profile_photo': profile_photo,
+                'id': row[1],
+                'username': row[2]
+            }
+            messages.append(message)
+        return jsonify(messages), 200
+
     return "OK"
 
 @app.route('/chat/room', methods=['GET'])
@@ -502,12 +518,19 @@ def chatroom():
                 conn.rollback()
                 return str(e), 400
 
+connected_users = {}  # Используйте словарь для хранения соответствия user_id и session_id
 
 @socketio.on('connect')
-def handle_connect():
+def handle_connect(data):
     print('CONNECTED')
-    user_id = request.args.get('user_id')
-    socketio.emit('connected', {'user_id': user_id})
+    # user_id = data['user_id']
+    # session_id = request.sid
+    # if user_id in connected_users:
+    #     return "Such a user exists"
+    # else:
+    #     connected_users[user_id] = session_id  # Добавляем запись в словарь
+    #     socketio.emit('connected', {'user_id': user_id})
+    # print("111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111")
     
 
 
@@ -604,7 +627,7 @@ def chat_msg(data):
                 'is_read': row[5]
             }
             messages.append(message)
-        socketio.emit('new_message', messages)
+        socketio.emit('message', messages)
     
     except exc as e:
         conn.rollback()
@@ -616,7 +639,6 @@ def chat_msg(data):
 def chat_count(data):
     try:
         chat_users = []
-        print(chat_users)
         user_id_to_exclude = data['id']
         query = text("""
             SELECT u.username, u.profile_photo, u.id, COUNT(m.id) as unread_msg
@@ -632,7 +654,7 @@ def chat_count(data):
             username, profile_photo, user_id, unread_msg = row
             photo = change_aspect_ratio_and_encode(profile_photo, 16/9)
             user_data = {
-                "username": str(username),
+                # "username": str(username),
                 # "profile_photo": photo,
                 "id": user_id,
                 "unread_msg": unread_msg
@@ -648,8 +670,11 @@ def chat_count(data):
 @socketio.on('disconnect')
 def handle_disconnect():
     print('DISCONNECTED')
-    user_id = request.args.get('user_id')
-    socketio.emit('connected')
+    session_id = request.sid
+    for user_id, sid in connected_users.items():
+        if sid == session_id:
+            del connected_users[user_id]
+            break
 
 
 
