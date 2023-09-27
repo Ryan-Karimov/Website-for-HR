@@ -29,7 +29,7 @@ mail = Mail(app)
 # socketio = SocketIO(app, cors_allowed_origins="*")
 socketio = SocketIO(app=app, engineio_logger=True, cors_allowed_origins="*", logger=True)
 # socketio = SocketIO(app)
-CORS(app, resources={r"/socket.io/*": {"origins": "http://localhost:5173"}})
+CORS(app, resources={r"/socket.io/*": {"origins": "*"}})
 engine = create_engine(database)
 conn = engine.connect()
 
@@ -478,7 +478,8 @@ def chat(id: int):
                 'username': row[2]
             }
             messages.append(message)
-        return jsonify(messages), 200
+        chat_users_sorted = sorted(messages, key=lambda x: x['id'])
+        return jsonify(chat_users_sorted), 200
 
     return "OK"
 
@@ -654,13 +655,15 @@ def chat_count(data):
             username, profile_photo, user_id, unread_msg = row
             photo = change_aspect_ratio_and_encode(profile_photo, 16/9)
             user_data = {
-                # "username": str(username),
+                "username": str(username),
                 # "profile_photo": photo,
                 "id": user_id,
                 "unread_msg": unread_msg
             }
             chat_users.append(user_data)
-        socketio.emit('count', chat_users)
+        # После цикла, который заполняет chat_users
+        chat_users_sorted = sorted(chat_users, key=lambda x: x['id'])
+        socketio.emit('count', chat_users_sorted)
         # return jsonify(chat_users)
 
     except exc.StatementError as e:
