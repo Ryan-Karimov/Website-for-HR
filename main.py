@@ -144,13 +144,14 @@ def login():
             user_data = text("SELECT username, password, id, role, accepted FROM user_data WHERE username=:username")
             result = conn.execute(user_data, {'username': username})
             user = result.fetchone()
-            
+            print(user)
             if user is None:
                 return jsonify({'message': 'Bunday foydalanuvchi nomi mavjud emas'}), 400
             is_valid = bcrypt.verify(password, user[1])
             if is_valid:
                 if user[4] == True:
-                    access_token = create_access_token(identity=user.username)
+                    add_claims = check_token(user)
+                    access_token = create_access_token(identity=add_claims)
                     return jsonify({
                         "message": "Login muvaffaqiyatli yakunlandi",
                         "id": user[2],
@@ -411,6 +412,15 @@ def search_id(id: int):
 @app.route('/stat', methods=['POST', 'GET'])
 @jwt_required()
 def stat():
+    claims = get_jwt_identity()
+    # user_role = claims.get()
+    # print(claims)
+    # hq = text("SELECT * FROM user_data WHERE username = :current_user")
+    # result = conn.execute(hq, current_user).fetchone()
+    # if result.role != 'admin':
+    #     return 'Invalid token'
+    # data_from_client = request.headers.get('userId')
+    # print(data_from_client)
     if request.method == 'GET':
         try:
             date_data = {}
@@ -518,30 +528,53 @@ def chatroom():
         except exc.StatementError as e:
                 conn.rollback()
                 return str(e), 400
+        
+
+@app.route('/secure_resource')
+@jwt_required()
+def secure_resource():
+    print("1111111111111111111111111111111111111111111111111111111111111111111111111111111")
+    # Получаем данные из JWT токена
+    user_identity = get_jwt_identity()
+    
+    # Получаем данные из заголовка запроса (или из другого места)
+    data_from_client = request.headers
+    print(data_from_client)
+
+    # Сравниваем данные из JWT токена с данными от клиента
+    if data_from_client == user_identity.get('some_data', None):
+        # Данные совпадают, выполните действие
+        return 'Access granted'
+    else:
+        # Данные не совпадают, выполняйте соответствующие действия
+        return 'Access denied'
 
 connected_users = {}  # Используйте словарь для хранения соответствия user_id и session_id
 
-@socketio.on('connect')
+@socketio.on('hello')
 def handle_connect(data):
     print('CONNECTED')
-    # user_id = data['user_id']
-    # session_id = request.sid
-    # if user_id in connected_users:
-    #     return "Such a user exists"
-    # else:
-    #     connected_users[user_id] = session_id  # Добавляем запись в словарь
-    #     socketio.emit('connected', {'user_id': user_id})
-    # print("111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111")
+    user_id = data['id']
+    print(user_id)
+    session_id = request.sid
+    if user_id not in connected_users.keys():
+        # Записываем session_id в словарь
+        connected_users[user_id] = session_id
+        print(connected_users)
+    else:
+        return "Such a user exists", 400
+    print(connected_users)
+    print("111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111")
     
 
 
-@socketio.on('message')
+@socketio.on('new_message')
 def send_message(data):
     sender_id = data['sender_id']
     receiver_id = data['receiver_id']
     message = data['message']
     print(data)
-
+    socket_id = connected_users.get(sender_id)
     query = text("""
         UPDATE messages
         SET is_read = true
@@ -584,18 +617,19 @@ def send_message(data):
             'is_read': row[5]
         }
         messages.append(message)
-    socketio.emit('message', messages)
+    socketio.emit('new_message', messages, room=socket_id)
 
 
-@socketio.on('new_message')
+@socketio.on('message')
 def chat_msg(data):
-    print("NEW MESSAGE")
+    print("MESSAGE")
     sender_id = data['sender_id']
     receiver_id = data['receiver_id']
     msg_id = data['msg_id']
     print(data)
 
     try:
+        socket_id = connected_users.get(sender_id)
         query = text("""
             UPDATE messages
             SET is_read = TRUE
@@ -628,7 +662,7 @@ def chat_msg(data):
                 'is_read': row[5]
             }
             messages.append(message)
-        socketio.emit('message', messages)
+        socketio.emit('see_message', messages, room=socket_id)
     
     except exc as e:
         conn.rollback()
@@ -641,30 +675,32 @@ def chat_count(data):
     try:
         chat_users = []
         user_id_to_exclude = data['id']
-        query = text("""
-            SELECT u.username, u.profile_photo, u.id, COUNT(m.id) as unread_msg
-            FROM user_data u
-            LEFT JOIN messages m ON u.id = m.sender_id AND m.receiver_id = :user_id AND m.is_read = false
-            WHERE u.id != :user_id_to_exclude
-            GROUP BY u.username, u.profile_photo, u.id;
-        """)
-        params = {'user_id': user_id_to_exclude, 'user_id_to_exclude': user_id_to_exclude}
-        result = conn.execute(query, params).fetchall()
+        socket_id = connected_users.get(user_id_to_exclude)
+        if socket_id:
+            query = text("""
+                SELECT u.username, u.profile_photo, u.id, COUNT(m.id) as unread_msg
+                FROM user_data u
+                LEFT JOIN messages m ON u.id = m.sender_id AND m.receiver_id = :user_id AND m.is_read = false
+                WHERE u.id != :user_id_to_exclude
+                GROUP BY u.username, u.profile_photo, u.id;
+            """)
+            params = {'user_id': user_id_to_exclude, 'user_id_to_exclude': user_id_to_exclude}
+            result = conn.execute(query, params).fetchall()
 
-        for row in result:
-            username, profile_photo, user_id, unread_msg = row
-            photo = change_aspect_ratio_and_encode(profile_photo, 16/9)
-            user_data = {
-                "username": str(username),
-                # "profile_photo": photo,
-                "id": user_id,
-                "unread_msg": unread_msg
-            }
-            chat_users.append(user_data)
-        # После цикла, который заполняет chat_users
-        chat_users_sorted = sorted(chat_users, key=lambda x: x['id'])
-        socketio.emit('count', chat_users_sorted)
-        # return jsonify(chat_users)
+            for row in result:
+                username, profile_photo, user_id, unread_msg = row
+                photo = change_aspect_ratio_and_encode(profile_photo, 16/9)
+                user_data = {
+                    # "username": str(username),
+                    # "profile_photo": photo,
+                    "id": user_id,
+                    "unread_msg": unread_msg
+                }
+                chat_users.append(user_data)
+            # После цикла, который заполняет chat_users
+            chat_users_sorted = sorted(chat_users, key=lambda x: x['id'])
+            socketio.emit('count', chat_users_sorted, room=socket_id)
+            # return jsonify(chat_users)
 
     except exc.StatementError as e:
         conn.rollback()
@@ -673,13 +709,15 @@ def chat_count(data):
 @socketio.on('disconnect')
 def handle_disconnect():
     print('DISCONNECTED')
-    session_id = request.sid
-    for user_id, sid in connected_users.items():
-        if sid == session_id:
+    socket_id = request.sid
+    print(socket_id)
+    for user_id, sid in list(connected_users.items()):
+        print(user_id, sid)
+        if sid == socket_id:
             del connected_users[user_id]
+            print("User o'chirildi")
+            print(connected_users)
             break
-
-
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, port=1000, host='0.0.0.0')

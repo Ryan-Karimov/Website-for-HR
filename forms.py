@@ -1,14 +1,14 @@
 from io import BytesIO
 import json
 from sqlalchemy.orm import validates, declarative_base
-from sqlalchemy import Column, String, Boolean, Integer
+from sqlalchemy import Column, String, Boolean, Integer, text
 import validators, base64, os
 from datetime import datetime
 from PIL import Image
 from passlib.hash import bcrypt
 from config import *
 from flask_mail import Message
-from main import mail
+from main import mail, conn
 
 #validatsiya
 Base = declarative_base()
@@ -177,3 +177,21 @@ def encode_to_base64(file_path):
 #     username = data['username']
 #     email = data['email']
 #     password = data['password']
+
+def check_token(user):
+    claims = {
+        'username': user.username,
+        "id": user.id,
+        "role": user.role
+    }
+    return claims
+
+
+def check_user(current_user):
+    hq = text("SELECT * FROM user_data WHERE username = :current_user")
+    result = conn.execute(hq, current_user.username).fetchone()
+    
+
+
+
+    {'username': 'admin', 'id': 1, 'role': 'admin'}
