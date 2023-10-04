@@ -171,54 +171,59 @@ def login():
 
 
 @app.route('/')
-# @jwt_required()
+@jwt_required()
 def hello_world():
-    # current_user = get_jwt_identity()
-    # print(type(current_user))
-    # hq = text("SELECT * FROM user_data WHERE username = :current_user")
-    # result = conn.execute(hq, current_user).fetchone()
-    # if result.role != 'admin':
-    #     return 'Invalid token'
-    with engine.connect() as conn:
-        query2 = text("SELECT COUNT(username) FROM user_data")
-        result2 = conn.execute(query2)
-        result_string = f"Ma'lumotlar omborida {result2.scalar()} ta foydalanuvchi mavjud."
-        return result_string, 200
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        with engine.connect() as conn:
+            query2 = text("SELECT COUNT(username) FROM user_data")
+            result2 = conn.execute(query2)
+            result_string = f"Ma'lumotlar omborida {result2.scalar()} ta foydalanuvchi mavjud."
+            return result_string, 200
 
 
 @app.route('/user/<id>', methods=['PATCH', 'GET', 'DELETE'])
 @jwt_required()
 def user_id(id: int):
-    # current_user = get_jwt_identity()
-    # query1 = text(f"SELECT * FROM user_data WHERE username={current_user}")
-    # result1 = conn.execute(query1)
-    # if result1 != 'admin':
-    #     return 'Invalid token'
-    if request.method == 'GET':
-        try:
-            user = conn.execute(text(f"SELECT * FROM user_data WHERE id={id}")).fetchone()
-            photo = change_aspect_ratio_and_encode(user.profile_photo, 16/9)
-            skill = user.skills
-            skills_list = skills(skill)
-            resume = encode_to_base64(user.resume)
-            user_data = {
-                "message": "Avtorizatsiya muvaffaqiyatli amalga oshirildi",
-                "fullname": user.fullname,
-                "username": user.username,
-                "email": user.email,
-                "date_birth": user.date_birth,
-                "phone_number": number(user.phone_number),
-                "address": user.address,
-                "profile_photo": photo,
-                "major": user.major,
-                "experience": user.experience,
-                "skills": skills_list,
-                "resume": resume
-            }
-            return jsonify(user_data), 200
-        except exc.StatementError as e:
-            conn.rollback()
-            return str(e), 400
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'GET':
+            try:
+                user = conn.execute(text(f"SELECT * FROM user_data WHERE id={id}")).fetchone()
+                photo = change_aspect_ratio_and_encode(user.profile_photo, 16/9)
+                skill = user.skills
+                skills_list = skills(skill)
+                resume = encode_to_base64(user.resume)
+                user_data = {
+                    "message": "Avtorizatsiya muvaffaqiyatli amalga oshirildi",
+                    "fullname": user.fullname,
+                    "username": user.username,
+                    "email": user.email,
+                    "date_birth": user.date_birth,
+                    "phone_number": number(user.phone_number),
+                    "address": user.address,
+                    "profile_photo": photo,
+                    "major": user.major,
+                    "experience": user.experience,
+                    "skills": skills_list,
+                    "resume": resume
+                }
+                return jsonify(user_data), 200
+            except exc.StatementError as e:
+                conn.rollback()
+                return str(e), 400
 
     if request.method == 'PATCH':
         data = request.json
@@ -253,281 +258,343 @@ def user_id(id: int):
 @app.route('/update_profile/<id>', methods=['PATCH'])
 @jwt_required()
 def update(id: int):
-    if request.method == 'PATCH':
-        new_data = request.json
-        username = new_data['username']
-        try:
-            updated_data = {}
-            for key, value in new_data.items():
-                if key == 'password': 
-                    value = hash_pass(value)
-                elif key == 'profile_photo':
-                    value = save_base64_image(value)
-                elif key == 'skills':
-                    value1 = [skill.strip() for skill in value]
-                    # value = re.sub(r'(\w+)', r"'\1'", ','.join(value1))
-                elif key == 'resume':
-                    value = save_base64_resume(value, username)
-                updated_data[key] = value
-                
-            # for key, value in updated_data.items():
-                statement = text(f"UPDATE user_data SET {key} = :value WHERE id = :id")
-                parameters = {"value": value, "id": id}
-                conn.execute(statement, parameters)
-                conn.commit()
-        except exc.StatementError as e:
-            conn.rollback()
-            if 'уникальности "username"' in str(e):
-                return "Bunday username mavjud", 400
-            if 'уникальности "email"' in str(e):
-                return 'Bunday email mavjud', 400
-            return str(error_dict), 400
-        except exc.ResourceClosedError as e:
-            conn.rollback()
-            error_dict = e.__dict__
-            return error_dict
-        return 'Profil muvaffaqiyatli yangilandi', 200
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'PATCH':
+            new_data = request.json
+            username = new_data['username']
+            try:
+                updated_data = {}
+                for key, value in new_data.items():
+                    if key == 'password': 
+                        value = hash_pass(value)
+                    elif key == 'profile_photo':
+                        value = save_base64_image(value)
+                    elif key == 'skills':
+                        value1 = [skill.strip() for skill in value]
+                        # value = re.sub(r'(\w+)', r"'\1'", ','.join(value1))
+                    elif key == 'resume':
+                        value = save_base64_resume(value, username)
+                    updated_data[key] = value
+                    
+                # for key, value in updated_data.items():
+                    statement = text(f"UPDATE user_data SET {key} = :value WHERE id = :id")
+                    parameters = {"value": value, "id": id}
+                    conn.execute(statement, parameters)
+                    conn.commit()
+            except exc.StatementError as e:
+                conn.rollback()
+                if 'уникальности "username"' in str(e):
+                    return "Bunday username mavjud", 400
+                if 'уникальности "email"' in str(e):
+                    return 'Bunday email mavjud', 400
+                return str(error_dict), 400
+            except exc.ResourceClosedError as e:
+                conn.rollback()
+                error_dict = e.__dict__
+                return error_dict
+            return 'Profil muvaffaqiyatli yangilandi', 200
 
 
 @app.route('/users', methods=['GET', 'PATCH'])
 @jwt_required()
 def users():
-    if request.method == 'GET':
-        try:
-            result = conn.execute(text("SELECT * FROM user_data WHERE approved=True"))
-            users = [dict(zip(result.keys(), row)) for row in result.fetchall()]
-            all_users = []
-            for user in users:
-                for key, value in user.items():
-                    if isinstance(value, memoryview):
-                        user[key] = value.tobytes().decode('utf-8')
-                    if key == 'profile_photo' and value != None:
-                        value = change_aspect_ratio_and_encode(value, 16/9)
-                        user[key] = value
-                all_users.append(user)
-            return jsonify(all_users), 200
-        except Exception as e:
-            return str(e), 400
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'GET':
+            try:
+                result = conn.execute(text("SELECT * FROM user_data WHERE approved=True"))
+                users = [dict(zip(result.keys(), row)) for row in result.fetchall()]
+                all_users = []
+                for user in users:
+                    for key, value in user.items():
+                        if isinstance(value, memoryview):
+                            user[key] = value.tobytes().decode('utf-8')
+                        if key == 'profile_photo' and value != None:
+                            value = change_aspect_ratio_and_encode(value, 16/9)
+                            user[key] = value
+                    all_users.append(user)
+                return jsonify(all_users), 200
+            except Exception as e:
+                return str(e), 400
 
 
 @app.route('/admin', methods=['PATCH', 'DELETE', 'GET'])
 @jwt_required()
 def admin():
-    if request.method == 'PATCH':
-        try:
-            id = request.json
-            a = conn.execute(text(f"UPDATE user_data SET accepted=true WHERE id='{id}'"))
-            conn.commit()
-        except exc.StatementError as e:
-            conn.rollback()
-            return str(e), 400
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'PATCH':
+            try:
+                id = request.json
+                a = conn.execute(text(f"UPDATE user_data SET accepted=true WHERE id='{id}'"))
+                conn.commit()
+            except exc.StatementError as e:
+                conn.rollback()
+                return str(e), 400
         
 
 @app.route('/logout/<id>', methods=['POST', 'GET'])
 @jwt_required()
 def logout(id: int):
-    if request.method == 'GET':
-        return "Tizimdan muvaffaqiyatli chiqildi", 200
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'GET':
+            return "Tizimdan muvaffaqiyatli chiqildi", 200
     
 
 
 @app.route('/search', methods=['POST', 'GET'])
 @jwt_required()
 def search():
-    if request.method == 'POST':
-        resumes = []
-        data = request.json
-        try:
-            if not data:
-                search_query = "SELECT id, username, major, experience, skills, email, phone_number, resume FROM user_data"
-                search_results = conn.execute(text(search_query)).fetchall()
-                result_list = [{'id': row[0], 'username': row[1], 'major': row[2], 'experience': row[3], 'skills': [skill.replace('"', '') for skill in row[4].split(',')] if row[4] is not None else [],
-                                'email': row[5], 'phone_number': [phone_number for phone_number in row[6].split(',')] if row[6] is not None else [], 'resume': row[7]} for row in search_results]
-                return jsonify({'results': result_list}), 200
-            if any(key in data for key in ['skills', 'major', 'experience']):
-                conditions = []
-                params = {}
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'POST':
+            resumes = []
+            data = request.json
+            try:
+                if not data:
+                    search_query = "SELECT id, username, major, experience, skills, email, phone_number, resume FROM user_data"
+                    search_results = conn.execute(text(search_query)).fetchall()
+                    result_list = [{'id': row[0], 'username': row[1], 'major': row[2], 'experience': row[3], 'skills': [skill.replace('"', '') for skill in row[4].split(',')] if row[4] is not None else [],
+                                    'email': row[5], 'phone_number': [phone_number for phone_number in row[6].split(',')] if row[6] is not None else [], 'resume': row[7]} for row in search_results]
+                    return jsonify({'results': result_list}), 200
+                if any(key in data for key in ['skills', 'major', 'experience']):
+                    conditions = []
+                    params = {}
 
-                if 'skills' in data:
-                    skills = data['skills']
-                    skill_conditions = " OR ".join(["skills ILIKE :skill_" + str(idx) for idx, _ in enumerate(skills)])
-                    conditions.append("(" + skill_conditions + ")")
-                    for idx, skill in enumerate(skills):
-                        params["skill_" + str(idx)] = f"%{skill}%"
+                    if 'skills' in data:
+                        skills = data['skills']
+                        skill_conditions = " OR ".join(["skills ILIKE :skill_" + str(idx) for idx, _ in enumerate(skills)])
+                        conditions.append("(" + skill_conditions + ")")
+                        for idx, skill in enumerate(skills):
+                            params["skill_" + str(idx)] = f"%{skill}%"
 
-                if 'major' in data:
-                    conditions.append("major = :major")
-                    params['major'] = data['major']
-                if 'experience' in data:
-                    conditions.append("experience = :experience")
-                    params['experience'] = data['experience']
+                    if 'major' in data:
+                        conditions.append("major = :major")
+                        params['major'] = data['major']
+                    if 'experience' in data:
+                        conditions.append("experience = :experience")
+                        params['experience'] = data['experience']
 
-                search_query = "SELECT DISTINCT id, username, major, experience, skills, email, phone_number, resume FROM user_data"
-                if conditions:
-                    search_query += " WHERE " + " AND ".join(conditions)
+                    search_query = "SELECT DISTINCT id, username, major, experience, skills, email, phone_number, resume FROM user_data"
+                    if conditions:
+                        search_query += " WHERE " + " AND ".join(conditions)
 
-                search_results = conn.execute(text(search_query), params).fetchall()
-                result_list = [{'id': row[0], 'username': row[1], 'major': row[2], 'experience': row[3], 'skills': [skill.replace('"', '') for skill in row[4].split(',')] if row[4] is not None else [],
-                                'email': row[5], 'phone_number': [phone_number for phone_number in row[6].split(',')] if row[6] is not None else [], 'resume': row[7]} for row in search_results]
-                return jsonify({'results': result_list}), 200
-        except exc.StatementError as e:
-            conn.rollback()
-            return str(e), 400
-    return "Kalit so'z xato"
+                    search_results = conn.execute(text(search_query), params).fetchall()
+                    result_list = [{'id': row[0], 'username': row[1], 'major': row[2], 'experience': row[3], 'skills': [skill.replace('"', '') for skill in row[4].split(',')] if row[4] is not None else [],
+                                    'email': row[5], 'phone_number': [phone_number for phone_number in row[6].split(',')] if row[6] is not None else [], 'resume': row[7]} for row in search_results]
+                    return jsonify({'results': result_list}), 200
+            except exc.StatementError as e:
+                conn.rollback()
+                return str(e), 400
+        return "Kalit so'z xato"
 
 
 @app.route('/search/<id>', methods=['POST', 'GET', 'PATCH'])
 @jwt_required()
 def search_id(id: int):
-    if request.method == 'GET':
-        try:
-            statement = text(f"SELECT * FROM user_data WHERE id = :id")
-            parameters = {"id": id}
-            user = conn.execute(statement, parameters).fetchone()
-            if user is None:
-                return 'Bunday foydalanuvchi mavjud emas', 400
-            else:
-                photo = change_aspect_ratio_and_encode(user.profile_photo, 16/9)
-                skill = skills(user.skills)
-                phone_number = number(user.phone_number)
-                user_info = {
-                "message": "Succesfull",
-                "fullname": user.fullname,
-                "username": user.username,
-                "email": user.email,
-                "date_birth": user.date_birth,
-                "phone_number": number(user.phone_number),
-                "address": user.address,
-                "profile_photo": photo,
-                "major": user.major,
-                "experience": user.experience,
-                "skills": skill,
-                "resume": encode_to_base64(user.resume)
-            }
-            return jsonify(user_info), 200
-        except exc.StatementError as e:
-            conn.rollback()
-            return str(e), 400
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'GET':
+            try:
+                statement = text(f"SELECT * FROM user_data WHERE id = :id")
+                parameters = {"id": id}
+                user = conn.execute(statement, parameters).fetchone()
+                if user is None:
+                    return 'Bunday foydalanuvchi mavjud emas', 400
+                else:
+                    photo = change_aspect_ratio_and_encode(user.profile_photo, 16/9)
+                    skill = skills(user.skills)
+                    phone_number = number(user.phone_number)
+                    user_info = {
+                    "message": "Succesfull",
+                    "fullname": user.fullname,
+                    "username": user.username,
+                    "email": user.email,
+                    "date_birth": user.date_birth,
+                    "phone_number": number(user.phone_number),
+                    "address": user.address,
+                    "profile_photo": photo,
+                    "major": user.major,
+                    "experience": user.experience,
+                    "skills": skill,
+                    "resume": encode_to_base64(user.resume)
+                }
+                return jsonify(user_info), 200
+            except exc.StatementError as e:
+                conn.rollback()
+                return str(e), 400
 
 @app.route('/stat', methods=['POST', 'GET'])
 @jwt_required()
 def stat():
-    claims = get_jwt_identity()
-    # user_role = claims.get()
-    # print(claims)
-    # hq = text("SELECT * FROM user_data WHERE username = :current_user")
-    # result = conn.execute(hq, current_user).fetchone()
-    # if result.role != 'admin':
-    #     return 'Invalid token'
-    # data_from_client = request.headers.get('userId')
-    # print(data_from_client)
-    if request.method == 'GET':
-        try:
-            date_data = {}
-            query1 = text("SELECT DATE_TRUNC('day', created_on) AS registration_date, COUNT(*) AS user_count FROM user_data GROUP BY registration_date;")
-            data1 = conn.execute(query1).fetchall()
-            
-            query2 = text("SELECT major, COUNT(*) AS developer_count FROM user_data GROUP BY major;")
-            data2 = conn.execute(query2).fetchall()
-
-            query3 = text("SELECT experience, major, COUNT(*) AS experience_count FROM user_data GROUP BY experience, major;")
-            data3 = conn.execute(query3).fetchall()
-
-            result = []
-
-            for row in data1:
-                result.append({"date": str(row[0]), "count": row[1], "type": "user_count"})
-
-            for row in data2:
-                result.append({"major": str(row[0]), "count": row[1], "type": "developer_count"})
-
-            exp_dict = []
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'GET':
+            try:
+                date_data = {}
+                query1 = text("SELECT DATE_TRUNC('day', created_on) AS registration_date, COUNT(*) AS user_count FROM user_data GROUP BY registration_date;")
+                data1 = conn.execute(query1).fetchall()
                 
-            for row in data3:
-                exp_dict.append({"experience": str(row[0]), "major": str(row[1]), "count": row[2], "type": "experience_count"})
+                query2 = text("SELECT major, COUNT(*) AS developer_count FROM user_data GROUP BY major;")
+                data2 = conn.execute(query2).fetchall()
 
-            result.append({"experience": exp_dict})
+                query3 = text("SELECT experience, major, COUNT(*) AS experience_count FROM user_data GROUP BY experience, major;")
+                data3 = conn.execute(query3).fetchall()
 
-            return result, 200
-        except exc.StatementError as e:
-            conn.rollback()
-            return str(e), 400
+                result = []
+
+                for row in data1:
+                    result.append({"date": str(row[0]), "count": row[1], "type": "user_count"})
+
+                for row in data2:
+                    result.append({"major": str(row[0]), "count": row[1], "type": "developer_count"})
+
+                exp_dict = []
+                    
+                for row in data3:
+                    exp_dict.append({"experience": str(row[0]), "major": str(row[1]), "count": row[2], "type": "experience_count"})
+
+                result.append({"experience": exp_dict})
+
+                return result, 200
+            except exc.StatementError as e:
+                conn.rollback()
+                return str(e), 400
 
 
 @app.route('/chat/<id>', methods=['GET', 'POST'])
 @jwt_required()
 def chat(id: int):
-    if request.method == 'POST':
-        data = request.json
-        try:
-            if 'username' in data:
-                username = data['username']
-                query = text(f"SELECT profile_photo, id FROM user_data WHERE username='{username}'")
-                user_data = conn.execute(query).fetchone()
-                if user_data:
-                    profile_photo = change_aspect_ratio_and_encode(user_data.profile_photo, 16/9)
-                    return jsonify({"username": username, "profile_photo": profile_photo, "id": user_data.id}), 200
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'POST':
+            data = request.json
+            try:
+                if 'username' in data:
+                    username = data['username']
+                    query = text(f"SELECT profile_photo, id FROM user_data WHERE username='{username}'")
+                    user_data = conn.execute(query).fetchone()
+                    if user_data:
+                        profile_photo = change_aspect_ratio_and_encode(user_data.profile_photo, 16/9)
+                        return jsonify({"username": username, "profile_photo": profile_photo, "id": user_data.id}), 200
+                    else:
+                        return jsonify({"error": "User not found"}), 400
                 else:
-                    return jsonify({"error": "User not found"}), 400
-            else:
-                return jsonify({"error": "Invalid data"}), 400
-        except exc.StatementError as e:
-            conn.rollback()
-            return str(e), 400
-    if request.method == 'GET':
-        query1 = text(f"SELECT profile_photo, id, username FROM user_data WHERE id != :user_id")
-        params = {'user_id': id}
-        result = conn.execute(query1, params).fetchall()
+                    return jsonify({"error": "Invalid data"}), 400
+            except exc.StatementError as e:
+                conn.rollback()
+                return str(e), 400
+        if request.method == 'GET':
+            query1 = text(f"SELECT profile_photo, id, username FROM user_data WHERE id != :user_id")
+            params = {'user_id': id}
+            result = conn.execute(query1, params).fetchall()
 
-        messages = []
-        for row in result:
-            profile_photo = change_aspect_ratio_and_encode(row[0], 16/9)
-            message = {
-                'profile_photo': profile_photo,
-                'id': row[1],
-                'username': row[2]
-            }
-            messages.append(message)
-        chat_users_sorted = sorted(messages, key=lambda x: x['id'])
-        return jsonify(chat_users_sorted), 200
-
-    return "OK"
+            messages = []
+            for row in result:
+                profile_photo = change_aspect_ratio_and_encode(row[0], 16/9)
+                message = {
+                    'profile_photo': profile_photo,
+                    'id': row[1],
+                    'username': row[2]
+                }
+                messages.append(message)
+            chat_users_sorted = sorted(messages, key=lambda x: x['id'])
+            return jsonify(chat_users_sorted), 200
+        return "OK"
 
 @app.route('/chat/room', methods=['GET'])
 @jwt_required()
 def chatroom():
-    if request.method == 'GET':
-        user_1 = request.args.get('user_id1')
-        user_2 = request.args.get('user_id2')
-        try:
-            query = text("""
-                SELECT id, sender_id, receiver_id, message_text, timestamp, is_read
-                FROM messages
-                WHERE (sender_id = :user_id1 AND receiver_id = :user_id2)
-                OR (sender_id = :user_id2 AND receiver_id = :user_id1)
-                ORDER BY timestamp
-            """)
-            params = {'user_id1': user_1, 'user_id2': user_2}
-            result = conn.execute(query, params).fetchall()
+    current_user = get_jwt_identity()
+    user_id = request.headers.get('X-Userid')
+    user_role = request.headers.get('X-Userrole')
+    is_valid = check_user(current_user, user_id, user_role)
+    
+    if not is_valid:
+        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+    else:
+        if request.method == 'GET':
+            user_1 = request.args.get('user_id1')
+            user_2 = request.args.get('user_id2')
+            try:
+                query = text("""
+                    SELECT id, sender_id, receiver_id, message_text, timestamp, is_read
+                    FROM messages
+                    WHERE (sender_id = :user_id1 AND receiver_id = :user_id2)
+                    OR (sender_id = :user_id2 AND receiver_id = :user_id1)
+                    ORDER BY timestamp
+                """)
+                params = {'user_id1': user_1, 'user_id2': user_2}
+                result = conn.execute(query, params).fetchall()
 
-            # Формируем список сообщений
-            messages = []
-            for row in result:
-                timestamp = row[4]
-                formatted_timestamp = timestamp.strftime("(%Y-%m-%d) %H:%M")
-                message = {
-                    'msg_id': row[0],
-                    'sender_id': row[1],
-                    'receiver_id': row[2],
-                    'message': row[3],
-                    'timestamp': formatted_timestamp,
-                    'is_read': row[5]
-                }
-                messages.append(message)
-            return jsonify(messages), 200
-        except exc.StatementError as e:
-                conn.rollback()
-                return str(e), 400
+                # Формируем список сообщений
+                messages = []
+                for row in result:
+                    timestamp = row[4]
+                    formatted_timestamp = timestamp.strftime("(%Y-%m-%d) %H:%M")
+                    message = {
+                        'msg_id': row[0],
+                        'sender_id': row[1],
+                        'receiver_id': row[2],
+                        'message': row[3],
+                        'timestamp': formatted_timestamp,
+                        'is_read': row[5]
+                    }
+                    messages.append(message)
+                return jsonify(messages), 200
+            except exc.StatementError as e:
+                    conn.rollback()
+                    return str(e), 400
         
 
 @app.route('/secure_resource')
@@ -555,7 +622,6 @@ connected_users = {}  # Используйте словарь для хране�
 def handle_connect(data):
     print('CONNECTED')
     user_id = data['id']
-    print(user_id)
     session_id = request.sid
     if user_id not in connected_users.keys():
         # Записываем session_id в словарь
@@ -676,6 +742,7 @@ def chat_count(data):
         chat_users = []
         user_id_to_exclude = data['id']
         socket_id = connected_users.get(user_id_to_exclude)
+        print(connected_users)
         if socket_id:
             query = text("""
                 SELECT u.username, u.profile_photo, u.id, COUNT(m.id) as unread_msg

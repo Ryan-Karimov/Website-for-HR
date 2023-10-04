@@ -187,11 +187,11 @@ def check_token(user):
     return claims
 
 
-def check_user(current_user):
-    hq = text("SELECT * FROM user_data WHERE username = :current_user")
-    result = conn.execute(hq, current_user.username).fetchone()
+def check_user(current_user, user_id, user_role):
+    query1 = text(f"SELECT * FROM user_data WHERE username='{current_user['username']}'")
+    result1 = conn.execute(query1).fetchone()
     
-
-
-
-    {'username': 'admin', 'id': 1, 'role': 'admin'}
+    if str(result1.id) != user_id or result1.role != user_role:
+        return False
+    else:
+        return True
