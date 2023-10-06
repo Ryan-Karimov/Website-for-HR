@@ -13,25 +13,33 @@ from flask_socketio import SocketIO, emit
 from db import *
 
 
+# Flask-ilovaning nusxasini yaratamiz
 app = Flask(__name__)
 
+# Ilova uchun maxfiy kodni o'rnatamiz
 app.config['SECRET_KEY'] = secret_key
+
+# JWT (JSON Web Tokens) uchun maxfiy kodni o'rnatamiz
 app.config['JWT_SECRET_KEY'] = secret_key
+
+# SMTP (Simple Mail Transfer Protocol) orqali xat yuborish uchun sozlamalar
 app.config['MAIL_SERVER'] = 'smtp.googlemail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
 app.config['MAIL_USERNAME'] = from_email
 app.config['MAIL_DEFAULT_SENDER'] = from_email
 app.config['MAIL_PASSWORD'] = email_pass
+
+# JWT-kirish tokenining ishlash muddatini belgilaymiz
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=10)
-jwt = JWTManager(app)
-mail = Mail(app)
-# socketio = SocketIO(app, cors_allowed_origins="*")
-socketio = SocketIO(app=app, engineio_logger=True, cors_allowed_origins="*", logger=True)
-# socketio = SocketIO(app)
-CORS(app, resources={r"/socket.io/*": {"origins": "*"}})
-engine = create_engine(database)
-conn = engine.connect()
+
+# Flask kengaytmalarini ishga tushiramiz
+jwt = JWTManager(app)  # JWT tokenlarini boshqarish
+mail = Mail(app)        # Pochta orqali xabar yuborish
+socketio = SocketIO(app=app, engineio_logger=True, cors_allowed_origins="*", logger=True)  # WebSocket va Socket.IO
+CORS(app, resources={r"/socket.io/*": {"origins": "*"}})  # WebSocket uchun CORS ga ruxsat beramiz
+engine = create_engine(database)  # Ma'lumotlar bazasiga ulanishni yaratamiz
+conn = engine.connect()  # Ma'lumotlar bazasi bilan aloqa o'rnatamiz
 
 
 @app.after_request
@@ -144,7 +152,6 @@ def login():
             user_data = text("SELECT username, password, id, role, accepted FROM user_data WHERE username=:username")
             result = conn.execute(user_data, {'username': username})
             user = result.fetchone()
-            print(user)
             if user is None:
                 return jsonify({'message': 'Bunday foydalanuvchi nomi mavjud emas'}), 400
             is_valid = bcrypt.verify(password, user[1])
@@ -597,25 +604,6 @@ def chatroom():
                     return str(e), 400
         
 
-@app.route('/secure_resource')
-@jwt_required()
-def secure_resource():
-    print("1111111111111111111111111111111111111111111111111111111111111111111111111111111")
-    # Получаем данные из JWT токена
-    user_identity = get_jwt_identity()
-    
-    # Получаем данные из заголовка запроса (или из другого места)
-    data_from_client = request.headers
-    print(data_from_client)
-
-    # Сравниваем данные из JWT токена с данными от клиента
-    if data_from_client == user_identity.get('some_data', None):
-        # Данные совпадают, выполните действие
-        return 'Access granted'
-    else:
-        # Данные не совпадают, выполняйте соответствующие действия
-        return 'Access denied'
-
 connected_users = {}  # Используйте словарь для хранения соответствия user_id и session_id
 
 @socketio.on('hello')
@@ -626,12 +614,9 @@ def handle_connect(data):
     if user_id not in connected_users.keys():
         # Записываем session_id в словарь
         connected_users[user_id] = session_id
-        print(connected_users)
     else:
         return "Such a user exists", 400
     print(connected_users)
-    print("111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111")
-    
 
 
 @socketio.on('new_message')
@@ -639,7 +624,6 @@ def send_message(data):
     sender_id = data['sender_id']
     receiver_id = data['receiver_id']
     message = data['message']
-    print(data)
     socket_id = connected_users.get(sender_id)
     query = text("""
         UPDATE messages
@@ -692,7 +676,6 @@ def chat_msg(data):
     sender_id = data['sender_id']
     receiver_id = data['receiver_id']
     msg_id = data['msg_id']
-    print(data)
 
     try:
         socket_id = connected_users.get(sender_id)
@@ -742,7 +725,6 @@ def chat_count(data):
         chat_users = []
         user_id_to_exclude = data['id']
         socket_id = connected_users.get(user_id_to_exclude)
-        print(connected_users)
         if socket_id:
             query = text("""
                 SELECT u.username, u.profile_photo, u.id, COUNT(m.id) as unread_msg
@@ -777,12 +759,10 @@ def chat_count(data):
 def handle_disconnect():
     print('DISCONNECTED')
     socket_id = request.sid
-    print(socket_id)
     for user_id, sid in list(connected_users.items()):
-        print(user_id, sid)
         if sid == socket_id:
             del connected_users[user_id]
-            print("User o'chirildi")
+            print("USER DELETED")
             print(connected_users)
             break
 
