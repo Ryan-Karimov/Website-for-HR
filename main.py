@@ -56,17 +56,22 @@ def add_cors_headers(response):
 def register():
     if request.method == 'POST':
         new_user = request.json
+        print(new_user)
         try:
             password = bcrypt.hash(new_user['password'])
-            Users(username=new_user['username'],
-                email=new_user['email'],
-                password=new_user['password'])
+            print(password)
+            user = Users(username=new_user['username'],
+                    email=new_user['email'],
+                    password=new_user['password'])
+            print(user)
             confirm_code = str(uuid.uuid4().int)[:6]
+            print(confirm_code)
             stmt = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved, code) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved, :code)")
             params = {'username': new_user['username'], 'email': new_user['email'], 'password': password, 'accepted': False, 'role': 'user', 'phone_number': [], 'approved': False, 'code': str(confirm_code)}
             a = conn.execute(stmt, params)
             conn.commit()
             message = f"Tasdiqlash kodi: {confirm_code}"
+            print(message)
             send_email(sender=from_email, recipients=new_user['email'], message=message)
         except ValueError as e:
             error_message = str(e)
@@ -111,6 +116,7 @@ def register_code():
     if request.method == 'POST':
         try:
             data = request.json
+            print(data)
             data_db = text("SELECT * FROM user_data WHERE username=:username")
             result = conn.execute(data_db, {'username': data['username']})
             user = result.fetchone()

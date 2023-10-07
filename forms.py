@@ -23,9 +23,6 @@ class Users(Base):
     role = Column(String(50), default='user', nullable=True)
     accepted = Column(Boolean, default=False, nullable=True)
 
-    def __repr__(self):
-        return '<Users %r>' % self.username
-
     @validates('username')
     def username_alphanumeric(self, key, username):
         if not username[0].isalpha():
