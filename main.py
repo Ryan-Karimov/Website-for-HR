@@ -56,34 +56,30 @@ def add_cors_headers(response):
 def register():
     if request.method == 'POST':
         new_user = request.json
-        print(new_user)
         try:
+            existing_user = conn.execute(text("SELECT username FROM user_data WHERE username = :username"), {'username': new_user['username']}).fetchone()
+            if existing_user:
+                error = "Bu foydalanuvchi nomi band. Iltimos, boshqa foydalanuvchi nomini tanlang."
+                return error, 400
+            
+            existing_gmail = conn.execute(text("SELECT email FROM user_data WHERE email = :email"), {'email': new_user['email']}).fetchone()
+            if existing_gmail:
+                error = "Bu email band. Iltimos, boshqa elektron pochtadan foydalaning."
+                return error, 400
             password = bcrypt.hash(new_user['password'])
-            print(password)
             user = Users(username=new_user['username'],
                     email=new_user['email'],
                     password=new_user['password'])
-            print(user)
             confirm_code = str(uuid.uuid4().int)[:6]
-            print(confirm_code)
             stmt = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved, code) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved, :code)")
             params = {'username': new_user['username'], 'email': new_user['email'], 'password': password, 'accepted': False, 'role': 'user', 'phone_number': [], 'approved': False, 'code': str(confirm_code)}
             a = conn.execute(stmt, params)
             conn.commit()
             message = f"Tasdiqlash kodi: {confirm_code}"
-            print(message)
             send_email(sender=from_email, recipients=new_user['email'], message=message)
         except ValueError as e:
             error_message = str(e)
             return jsonify({'error': error_message}), 400
-        except exc.StatementError as e:
-            conn.rollback()
-            error_dict = e.__dict__['orig']
-            if 'уникальности "username"' in str(error_dict):
-                return "Bu foydalanuvchi nomi band. Iltimos, boshqa foydalanuvchi nomini tanlang.", 400
-            if 'уникальности "email"' in str(error_dict):
-                return 'Bu email band. Iltimos, boshqa elektron pochtadan foydalaning.', 400
-            return str(error_dict), 400
         except smtplib.SMTPAuthenticationError as e:
             return str(e)
     return jsonify({'message': 'Elektron pochta manzilingizga tasdiqlash kodi yuborildi!',
@@ -94,19 +90,24 @@ def register_gmail():
     if request.method == 'POST':
         try:
             new_user = request.json
+            # Проверка, существует ли пользователь с таким именем
+            existing_user = conn.execute(text("SELECT username FROM user_data WHERE username = :username"), {'username': new_user['username']}).fetchone()
+            if existing_user:
+                error = "Bu foydalanuvchi nomi band. Iltimos, boshqa foydalanuvchi nomini tanlang."
+                return error, 400
+            
+            # Хеширование пароля
             password = bcrypt.hash(new_user['id'])
             stmt = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved)")
             params = {'username': new_user['username'], 'email': new_user['email'], 'password': password, 'accepted': False, 'role': 'user', 'phone_number': [], 'approved': True}
             a = conn.execute(stmt, params)
             conn.commit()
-        except exc.StatementError as e:
+        except exc.IntegrityError as e:
             conn.rollback()
             error_dict = e.__dict__['orig']
-            if 'уникальности "username"' in str(error_dict):
-                return "Bu foydalanuvchi nomi band. Iltimos, boshqa foydalanuvchi nomini tanlang.", 400
-            if 'уникальности email' in str(error_dict):
-                return 'Bu email band. Iltimos, boshqa elektron pochtadan foydalaning.', 400
-            return str(error_dict), 400
+            if 'уникальности "email"' in str(error_dict):
+                error = 'Bu email band. Iltimos, boshqa elektron pochtadan foydalaning.'
+                return error, 400
     return "Ro'yxatdan o'tish muvaffaqiyatli yakunlandi"
 
 attempt = 3
@@ -328,7 +329,7 @@ def users():
     else:
         if request.method == 'GET':
             try:
-                result = conn.execute(text("SELECT * FROM user_data WHERE approved=True"))
+                result = conn.execute(text("SELECT * FROM user_data"))
                 users = [dict(zip(result.keys(), row)) for row in result.fetchall()]
                 all_users = []
                 for user in users:
