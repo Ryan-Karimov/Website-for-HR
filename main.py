@@ -90,10 +90,16 @@ def register_gmail():
     if request.method == 'POST':
         try:
             new_user = request.json
-            # Проверка, существует ли пользователь с таким именем
+            # Xuddi shu ismli foydalanuvchi mavjudligini tekshiramiz
             existing_user = conn.execute(text("SELECT username FROM user_data WHERE username = :username"), {'username': new_user['username']}).fetchone()
+            print(existing_user)
             if existing_user:
                 error = "Bu foydalanuvchi nomi band. Iltimos, boshqa foydalanuvchi nomini tanlang."
+                return error, 400
+            
+            existing_gmail = conn.execute(text("SELECT email FROM user_data WHERE email = :email"), {'email': new_user['email']}).fetchone()
+            if existing_gmail:
+                error = "Bu email band. Iltimos, boshqa elektron pochtadan foydalaning."
                 return error, 400
             
             # Хеширование пароля
@@ -102,12 +108,8 @@ def register_gmail():
             params = {'username': new_user['username'], 'email': new_user['email'], 'password': password, 'accepted': False, 'role': 'user', 'phone_number': [], 'approved': True}
             a = conn.execute(stmt, params)
             conn.commit()
-        except exc.IntegrityError as e:
-            conn.rollback()
-            error_dict = e.__dict__['orig']
-            if 'уникальности "email"' in str(error_dict):
-                error = 'Bu email band. Iltimos, boshqa elektron pochtadan foydalaning.'
-                return error, 400
+        except smtplib.SMTPAuthenticationError as e:
+            return str(e)
     return "Ro'yxatdan o'tish muvaffaqiyatli yakunlandi"
 
 attempt = 3
@@ -133,14 +135,14 @@ def register_code():
                         return 'Sizning e-mailingiz tasdiqlandi', 200 
                     elif data['code'] != user.code:
                         attempt -= 1
+                        if attempt == 0:
+                            stmt = text("DELETE FROM user_data WHERE username=:username")
+                            params = {'username': data['username']}
+                            conn.execute(stmt, params)
+                            conn.commit()
+                            attempt = 3
+                            return 'Sizda urinishlar qolmadi. Iltimos, qayta registratsiya qiling', 400
                     return f"Parol mos kelmadi. Sizda {attempt} ta urinish qoldi", 202
-                elif attempt == 0:
-                    stmt = text("DELETE FROM user_data WHERE username=:username")
-                    params = {'username': data['username']}
-                    conn.execute(stmt, params)
-                    conn.commit()
-                    attempt = 3
-                    return 'Sizda urinishlar qolmadi. Iltimos, qayta registratsiya qiling', 400
         except exc.StatementError as e:
             conn.rollback()
             return str(e), 400
@@ -255,11 +257,11 @@ def user_id(id: int):
             return str(e), 400    
     if request.method == 'DELETE':
         try:
-            # Сначала удаляем связанные записи из таблицы messages
+            # Avvaliga messages jadvalidan user'ga bog'liq yozuvlarni o'chiramiz
             conn.execute(text(f"DELETE FROM messages WHERE sender_id = {id}"))
             conn.execute(text(f"DELETE FROM messages WHERE receiver_id = {id}"))
 
-            # Теперь можно удалить запись из таблицы user_data
+            # Endi user_data jadvalidan user'ni o'chirishimiz mumkin
             conn.execute(text(f"DELETE FROM user_data WHERE id = {id}"))
             conn.commit()
             return "Foydalanuvchi o\'chirildi", 200
@@ -278,7 +280,7 @@ def update(id: int):
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'PATCH':
             new_data = request.json
@@ -675,6 +677,9 @@ def send_message(data):
         }
         messages.append(message)
     socketio.emit('new_message', messages, room=socket_id)
+    receiver_socket_id = connected_users.get(receiver_id)
+    if receiver_socket_id:
+        socketio.emit('new_message', messages, room=receiver_socket_id)
 
 
 @socketio.on('message')
@@ -719,6 +724,9 @@ def chat_msg(data):
             }
             messages.append(message)
         socketio.emit('see_message', messages, room=socket_id)
+        receiver_socket_id = connected_users.get(receiver_id)
+        if receiver_socket_id:
+            socketio.emit('see_message', messages, room=receiver_socket_id)
     
     except exc as e:
         conn.rollback()
@@ -734,21 +742,18 @@ def chat_count(data):
         socket_id = connected_users.get(user_id_to_exclude)
         if socket_id:
             query = text("""
-                SELECT u.username, u.profile_photo, u.id, COUNT(m.id) as unread_msg
+                SELECT u.id, COUNT(m.id) as unread_msg
                 FROM user_data u
                 LEFT JOIN messages m ON u.id = m.sender_id AND m.receiver_id = :user_id AND m.is_read = false
                 WHERE u.id != :user_id_to_exclude
-                GROUP BY u.username, u.profile_photo, u.id;
+                GROUP BY u.id;
             """)
             params = {'user_id': user_id_to_exclude, 'user_id_to_exclude': user_id_to_exclude}
             result = conn.execute(query, params).fetchall()
 
             for row in result:
-                username, profile_photo, user_id, unread_msg = row
-                photo = change_aspect_ratio_and_encode(profile_photo, 16/9)
+                user_id, unread_msg = row
                 user_data = {
-                    # "username": str(username),
-                    # "profile_photo": photo,
                     "id": user_id,
                     "unread_msg": unread_msg
                 }
@@ -756,7 +761,6 @@ def chat_count(data):
             # После цикла, который заполняет chat_users
             chat_users_sorted = sorted(chat_users, key=lambda x: x['id'])
             socketio.emit('count', chat_users_sorted, room=socket_id)
-            # return jsonify(chat_users)
 
     except exc.StatementError as e:
         conn.rollback()
