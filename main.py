@@ -1,6 +1,6 @@
 from datetime import timedelta, datetime
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 from flask_jwt_extended import create_access_token, jwt_required, JWTManager, get_jwt_identity
 from sqlalchemy import create_engine, text, exc
@@ -55,26 +55,43 @@ def add_cors_headers(response):
 @app.route('/register', methods=['POST', 'GET'])
 def register():
     if request.method == 'POST':
-        new_user = request.json
         try:
+            new_user = request.json
+
+            # Xuddi shu ismli foydalanuvchi mavjudligini tekshiramiz
             existing_user = conn.execute(text("SELECT username FROM user_data WHERE username = :username"), {'username': new_user['username']}).fetchone()
             if existing_user:
                 error = "Bu foydalanuvchi nomi band. Iltimos, boshqa foydalanuvchi nomini tanlang."
                 return error, 400
             
+            # Xuddi shu elektron pochtaga ega foydalanuvchi mavjudligini tekshiring
             existing_gmail = conn.execute(text("SELECT email FROM user_data WHERE email = :email"), {'email': new_user['email']}).fetchone()
             if existing_gmail:
                 error = "Bu email band. Iltimos, boshqa elektron pochtadan foydalaning."
                 return error, 400
             password = bcrypt.hash(new_user['password'])
-            user = Users(username=new_user['username'],
-                    email=new_user['email'],
-                    password=new_user['password'])
+            user = Users(
+                username=new_user['username'],
+                email=new_user['email'],
+                password=new_user['password']
+            )
             confirm_code = str(uuid.uuid4().int)[:6]
+            # session[new_user['username']] = {
+            #     'username': new_user['username'],
+            #     'email': new_user['email'],
+            #     'confirm_code': str(uuid.uuid4().int)[:6],
+            #     'password': password,
+            #     'accepted': False,
+            #     'role': 'user',
+            #     'phone_number': [],
+            #     'approved': True,
+            # }
             stmt = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved, code) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved, :code)")
             params = {'username': new_user['username'], 'email': new_user['email'], 'password': password, 'accepted': False, 'role': 'user', 'phone_number': [], 'approved': False, 'code': str(confirm_code)}
             a = conn.execute(stmt, params)
             conn.commit()
+
+            # Tasdiqlash xatini yuborish
             message = f"Tasdiqlash kodi: {confirm_code}"
             send_email(sender=from_email, recipients=new_user['email'], message=message)
         except ValueError as e:
@@ -92,20 +109,30 @@ def register_gmail():
             new_user = request.json
             # Xuddi shu ismli foydalanuvchi mavjudligini tekshiramiz
             existing_user = conn.execute(text("SELECT username FROM user_data WHERE username = :username"), {'username': new_user['username']}).fetchone()
-            print(existing_user)
             if existing_user:
                 error = "Bu foydalanuvchi nomi band. Iltimos, boshqa foydalanuvchi nomini tanlang."
                 return error, 400
             
+            # Xuddi shu elektron pochtaga ega foydalanuvchi mavjudligini tekshiring
             existing_gmail = conn.execute(text("SELECT email FROM user_data WHERE email = :email"), {'email': new_user['email']}).fetchone()
             if existing_gmail:
                 error = "Bu email band. Iltimos, boshqa elektron pochtadan foydalaning."
                 return error, 400
             
-            # Хеширование пароля
+            # Parol xeshlash
             password = bcrypt.hash(new_user['id'])
+
+            # Ma'lumotlar bazasiga foydalanuvchi ma'lumotlarini qo'shamiz
             stmt = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved)")
-            params = {'username': new_user['username'], 'email': new_user['email'], 'password': password, 'accepted': False, 'role': 'user', 'phone_number': [], 'approved': True}
+            params = {
+                'username': new_user['username'],
+                'email': new_user['email'],
+                'password': password,
+                'accepted': False,
+                'role': 'user',
+                'phone_number': [],
+                'approved': True,
+            }
             a = conn.execute(stmt, params)
             conn.commit()
         except smtplib.SMTPAuthenticationError as e:
@@ -119,10 +146,10 @@ def register_code():
     if request.method == 'POST':
         try:
             data = request.json
-            print(data)
             data_db = text("SELECT * FROM user_data WHERE username=:username")
             result = conn.execute(data_db, {'username': data['username']})
             user = result.fetchone()
+            # user = session.get(data['username'])
             if user:
                 global attempt
                 if attempt > 0:
@@ -131,6 +158,18 @@ def register_code():
                         params = {'approved': True, 'code': None, 'username': data['username']}
                         conn.execute(stmt, params)
                         conn.commit()
+                        # stmt = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved)")
+                        # params = {
+                        #     'username': user['username'],
+                        #     'email': user['email'],
+                        #     'password': user['password'],
+                        #     'accepted': False,
+                        #     'role': 'user',
+                        #     'phone_number': [],
+                        #     'approved': True,
+                        # }
+                        # a = conn.execute(stmt, params)
+                        # conn.commit()
                         attempt = 3
                         return 'Sizning e-mailingiz tasdiqlandi', 200 
                     elif data['code'] != user.code:
@@ -494,6 +533,7 @@ def stat():
                 date_data = {}
                 query1 = text("SELECT DATE_TRUNC('day', created_on) AS registration_date, COUNT(*) AS user_count FROM user_data GROUP BY registration_date;")
                 data1 = conn.execute(query1).fetchall()
+                data1 = sorted(data1, key=lambda row: row[0])
                 
                 query2 = text("SELECT major, COUNT(*) AS developer_count FROM user_data GROUP BY major;")
                 data2 = conn.execute(query2).fetchall()
@@ -682,7 +722,7 @@ def send_message(data):
         socketio.emit('new_message', messages, room=receiver_socket_id)
 
 
-@socketio.on('message')
+@socketio.on('see_message')
 def chat_msg(data):
     print("MESSAGE")
     sender_id = data['sender_id']
