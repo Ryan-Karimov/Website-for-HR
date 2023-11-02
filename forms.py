@@ -6,8 +6,8 @@ import validators, base64, os
 from datetime import datetime
 from PIL import Image
 from passlib.hash import bcrypt
-from config import *
 from flask_mail import Message
+
 from main import mail, conn
 
 #validatsiya
@@ -50,12 +50,6 @@ class Users(Base):
         return password
 
 
-class User:
-    def __init__(self, username, email, password):
-        self.username = username
-        self.email = email
-        self.password = password
-
 #base64'ni rasmga aylantirish va saqlash
 def save_base64_image(image):
     if "," in image:
@@ -91,25 +85,49 @@ def hash_pass(password):
     return hashed_password
 
 #rasmni formatini o'zgartirib, enkodlab jo'natish
+# def change_aspect_ratio_and_encode(image_path, new_ratio):
+#     if image_path == None:
+#         return image_path
+#     img = Image.open(image_path)
+#     width, height = img.size
+#     current_ratio = width / height
+
+#     if current_ratio > new_ratio:
+#         new_width = int(new_ratio * height)
+#         img = img.resize((new_width, height), resample=Image.LANCZOS)
+#     else:
+#         new_height = int(width / new_ratio)
+#         img = img.resize((width, new_height), resample=Image.LANCZOS)
+
+#     with BytesIO() as buffer:
+#         img.save(buffer, "PNG")
+#         encoded_string = base64.b64encode(buffer.getvalue())
+#     encoded_image = "data:image/png;base64," + encoded_string.decode("utf-8")
+#     return encoded_image
 def change_aspect_ratio_and_encode(image_path, new_ratio):
-    if image_path == None:
-        return image_path
-    img = Image.open(image_path)
-    width, height = img.size
-    current_ratio = width / height
+    if image_path is None:
+        return None
 
-    if current_ratio > new_ratio:
-        new_width = int(new_ratio * height)
-        img = img.resize((new_width, height), resample=Image.LANCZOS)
-    else:
-        new_height = int(width / new_ratio)
-        img = img.resize((width, new_height), resample=Image.LANCZOS)
+    try:
+        with Image.open(image_path) as img:
+            width, height = img.size
+            current_ratio = width / height
 
-    with BytesIO() as buffer:
-        img.save(buffer, "PNG")
-        encoded_string = base64.b64encode(buffer.getvalue())
-    encoded_image = "data:image/png;base64," + encoded_string.decode("utf-8")
-    return encoded_image
+            if current_ratio > new_ratio:
+                new_width = int(new_ratio * height)
+                img = img.resize((new_width, height), resample=Image.LANCZOS)
+            else:
+                new_height = int(width / new_ratio)
+                img = img.resize((width, new_height), resample=Image.LANCZOS)
+
+            with BytesIO() as buffer:
+                img.save(buffer, "PNG")
+                encoded_string = base64.b64encode(buffer.getvalue())
+            encoded_image = "data:image/png;base64," + encoded_string.decode("utf-8")
+            return encoded_image
+    except Exception as e:
+        # Handle any exceptions here or log them if necessary
+        return None
 
 #elektron pochta manzili verifikatsiyasi
 def send_email(sender, recipients, message):
@@ -156,24 +174,6 @@ def encode_to_base64(file_path):
     base64_data = "data:application/pdf;base64," + base64.b64encode(binary_data).decode('utf-8')
     return base64_data
 
-#email is None
-# def check_code(username, code):
-#     attempt = 3
-#     while attempt > 0:
-#         if code == saved_user_data.get('confirm_code'):
-#             a = conn.execute(text(f"INSERT INTO user_data (username,email,password, accepted, role, phone_number) VALUES (:username, :email, :password, :accepted, :role, :phone_number)"), {'username': saved_user_data['username'], 'email': saved_user_data['email'], 'password': saved_user_data['password'], 'accepted': False, 'role': 'user', 'phone_number': '[]'})
-#             conn.commit()
-#             return 'Registratsiya muvaffaqiyatli bajarildi'
-#         else:
-#             return 'Kiritilgan tasdiqlash kodi xato'
-#         attempt -= 1
-    
-
-# New_User
-# def user_data(data):
-#     username = data['username']
-#     email = data['email']
-#     password = data['password']
 
 def check_token(user):
     claims = {

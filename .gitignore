@@ -2,3 +2,5 @@
 config.py
 __pycache__/
 __pycache__
+MyWorld.service
+public.sql

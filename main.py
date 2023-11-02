@@ -1,6 +1,5 @@
-from datetime import timedelta, datetime
-import json
-from flask import Flask, request, jsonify, session
+from datetime import timedelta
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import create_access_token, jwt_required, JWTManager, get_jwt_identity
 from sqlalchemy import create_engine, text, exc
@@ -9,8 +8,7 @@ from forms import *
 from config import *
 import smtplib, uuid
 from flask_mail import Mail
-from flask_socketio import SocketIO, emit
-from db import *
+from flask_socketio import SocketIO
 
 
 # Flask-ilovaning nusxasini yaratamiz
@@ -69,8 +67,8 @@ def register():
             if existing_gmail:
                 error = "Bu email band. Iltimos, boshqa elektron pochtadan foydalaning."
                 return error, 400
-            password = bcrypt.hash(new_user['password'])
-            user = Users(
+            password = bcrypt.hash(new_user['password']).e
+            Users(
                 username=new_user['username'],
                 email=new_user['email'],
                 password=new_user['password']
@@ -86,12 +84,12 @@ def register():
             #     'phone_number': [],
             #     'approved': True,
             # }
-            stmt = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved, code) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved, :code)")
+            statement = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved, code) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved, :code)")
             params = {'username': new_user['username'], 'email': new_user['email'], 'password': password, 'accepted': False, 'role': 'user', 'phone_number': [], 'approved': False, 'code': str(confirm_code)}
-            a = conn.execute(stmt, params)
+            conn.execute(statement, params)
             conn.commit()
 
-            # Tasdiqlash xatini yuborish
+            # Tasdiqlash kodini yuborish
             message = f"Tasdiqlash kodi: {confirm_code}"
             send_email(sender=from_email, recipients=new_user['email'], message=message)
         except ValueError as e:
@@ -123,7 +121,7 @@ def register_gmail():
             password = bcrypt.hash(new_user['id'])
 
             # Ma'lumotlar bazasiga foydalanuvchi ma'lumotlarini qo'shamiz
-            stmt = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved)")
+            statement = text("INSERT INTO user_data (username, email, password, accepted, role, phone_number, approved) VALUES (:username, :email, :password, :accepted, :role, :phone_number, :approved)")
             params = {
                 'username': new_user['username'],
                 'email': new_user['email'],
@@ -133,7 +131,7 @@ def register_gmail():
                 'phone_number': [],
                 'approved': True,
             }
-            a = conn.execute(stmt, params)
+            a = conn.execute(statement, params)
             conn.commit()
         except smtplib.SMTPAuthenticationError as e:
             return str(e)
@@ -146,8 +144,8 @@ def register_code():
     if request.method == 'POST':
         try:
             data = request.json
-            data_db = text("SELECT * FROM user_data WHERE username=:username")
-            result = conn.execute(data_db, {'username': data['username']})
+            statement = text("SELECT * FROM user_data WHERE username=:username")
+            result = conn.execute(statement, {'username': data['username']})
             user = result.fetchone()
             # user = session.get(data['username'])
             if user:
@@ -236,11 +234,14 @@ def hello_world():
     if not is_valid:
         return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
     else:
-        with engine.connect() as conn:
+        try:
             query2 = text("SELECT COUNT(username) FROM user_data")
-            result2 = conn.execute(query2)
+            result2 = engine.execute(query2)
             result_string = f"Ma'lumotlar omborida {result2.scalar()} ta foydalanuvchi mavjud."
             return result_string, 200
+        except exc.StatementError as e:
+            engine.rollback()
+            return str(e), 400
 
 
 @app.route('/user/<id>', methods=['PATCH', 'GET', 'DELETE'])
@@ -256,24 +257,29 @@ def user_id(id: int):
     else:
         if request.method == 'GET':
             try:
-                user = conn.execute(text(f"SELECT * FROM user_data WHERE id={id}")).fetchone()
-                photo = change_aspect_ratio_and_encode(user.profile_photo, 16/9)
-                skill = user.skills
+                query = text("SELECT * FROM user_data WHERE id=:id")
+                result = engine.execute(query, id=id).fetchone()
+                if result is None:
+                    return 'User not found', 404
+                photo = change_aspect_ratio_and_encode(result.profile_photo, 16/9)
+                skill = result.skills
                 skills_list = skills(skill)
-                resume = encode_to_base64(user.resume)
+                resume = encode_to_base64(result.resume)
+                formatted_timestamp = result.created_on.strftime("%d %b %Y")
                 user_data = {
                     "message": "Avtorizatsiya muvaffaqiyatli amalga oshirildi",
-                    "fullname": user.fullname,
-                    "username": user.username,
-                    "email": user.email,
-                    "date_birth": user.date_birth,
-                    "phone_number": number(user.phone_number),
-                    "address": user.address,
+                    "fullname": result.fullname,
+                    "username": result.username,
+                    "email": result.email,
+                    "date_birth": result.date_birth,
+                    "phone_number": number(result.phone_number),
+                    "address": result.address,
                     "profile_photo": photo,
-                    "major": user.major,
-                    "experience": user.experience,
+                    "major": result.major,
+                    "experience": result.experience,
                     "skills": skills_list,
-                    "resume": resume
+                    "resume": resume,
+                    "joined": formatted_timestamp
                 }
                 return jsonify(user_data), 200
             except exc.StatementError as e:
@@ -284,26 +290,30 @@ def user_id(id: int):
         data = request.json
         try:
             if 'accepted' in data:
-                a = conn.execute(text(f"UPDATE user_data SET accepted='{data['accepted']}' WHERE id='{id}' and approved='True'"))
+                update_query = text("UPDATE user_data SET accepted=:accepted WHERE id=:id AND approved='True'")
+                conn.execute(update_query, accepted=data['accepted'], id=id)
                 conn.commit()
                 return 'Foydalanuvchi qabul qilindi', 200
             if 'role' in data:
-                a = conn.execute(text(f"UPDATE user_data SET role='{data['role']}' WHERE id='{id}'"))
+                update_query = text("UPDATE user_data SET role=:role WHERE id=:id")
+                conn.execute(update_query, role=data['role'], id=id)
                 conn.commit()
-                return 'Foydalanuvchining roli o\'zgardi', 200
+                return "Foydalanuvchining roli o'zgardi", 200
         except exc.StatementError as e:
             conn.rollback()
-            return str(e), 400    
+            return str(e), 400
     if request.method == 'DELETE':
         try:
-            # Avvaliga messages jadvalidan user'ga bog'liq yozuvlarni o'chiramiz
-            conn.execute(text(f"DELETE FROM messages WHERE sender_id = {id}"))
-            conn.execute(text(f"DELETE FROM messages WHERE receiver_id = {id}"))
+            # Сначала удалим сообщения, связанные с пользователем
+            delete_messages_query = text("DELETE FROM messages WHERE sender_id = :user_id OR receiver_id = :user_id")
+            conn.execute(delete_messages_query, user_id=id)
 
-            # Endi user_data jadvalidan user'ni o'chirishimiz mumkin
-            conn.execute(text(f"DELETE FROM user_data WHERE id = {id}"))
+            # Теперь удалим самого пользователя из таблицы user_data
+            delete_user_query = text("DELETE FROM user_data WHERE id = :user_id")
+            conn.execute(delete_user_query, user_id=id)
+
             conn.commit()
-            return "Foydalanuvchi o\'chirildi", 200
+            return "Foydalanuvchi o'chirildi", 200
         except exc.StatementError as e:
             conn.rollback()
             return str(e), 400
@@ -399,9 +409,15 @@ def admin():
     else:
         if request.method == 'PATCH':
             try:
-                id = request.json
-                a = conn.execute(text(f"UPDATE user_data SET accepted=true WHERE id='{id}'"))
+                data = request.json
+                id = data.get('id')
+                if id is None:
+                    return 'Invalid data', 400
+                
+                update_query = text("UPDATE user_data SET accepted=true WHERE id=:user_id")
+                conn.execute(update_query, user_id=id)
                 conn.commit()
+                return "Foydalanuvchi qabul qilindi", 200
             except exc.StatementError as e:
                 conn.rollback()
                 return str(e), 400
@@ -497,7 +513,6 @@ def search_id(id: int):
                 else:
                     photo = change_aspect_ratio_and_encode(user.profile_photo, 16/9)
                     skill = skills(user.skills)
-                    phone_number = number(user.phone_number)
                     user_info = {
                     "message": "Succesfull",
                     "fullname": user.fullname,
@@ -578,8 +593,8 @@ def chat(id: int):
             try:
                 if 'username' in data:
                     username = data['username']
-                    query = text(f"SELECT profile_photo, id FROM user_data WHERE username='{username}'")
-                    user_data = conn.execute(query).fetchone()
+                    query = text("SELECT profile_photo, id FROM user_data WHERE username=:username")
+                    user_data = conn.execute(query, username=username).fetchone()
                     if user_data:
                         profile_photo = change_aspect_ratio_and_encode(user_data.profile_photo, 16/9)
                         return jsonify({"username": username, "profile_photo": profile_photo, "id": user_data.id}), 200
@@ -591,9 +606,9 @@ def chat(id: int):
                 conn.rollback()
                 return str(e), 400
         if request.method == 'GET':
-            query1 = text(f"SELECT profile_photo, id, username FROM user_data WHERE id != :user_id")
+            query = text(f"SELECT profile_photo, id, username FROM user_data WHERE id != :user_id")
             params = {'user_id': id}
-            result = conn.execute(query1, params).fetchall()
+            result = conn.execute(query, params).fetchall()
 
             messages = []
             for row in result:
@@ -818,4 +833,5 @@ def handle_disconnect():
             break
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, port=1000, host='0.0.0.0')
+    socketio.run(app, debug=True, host='localhost', port=1000)
+    # socketio.run(app, debug=True, port=1000, host='0.0.0.0')
