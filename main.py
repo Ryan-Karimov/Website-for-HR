@@ -67,7 +67,7 @@ def register():
             if existing_gmail:
                 error = "Bu email band. Iltimos, boshqa elektron pochtadan foydalaning."
                 return error, 400
-            password = bcrypt.hash(new_user['password']).e
+            password = bcrypt.hash(new_user['password'])
             Users(
                 username=new_user['username'],
                 email=new_user['email'],
@@ -232,7 +232,7 @@ def hello_world():
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         try:
             query2 = text("SELECT COUNT(username) FROM user_data")
@@ -253,12 +253,13 @@ def user_id(id: int):
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'GET':
             try:
                 query = text("SELECT * FROM user_data WHERE id=:id")
-                result = engine.execute(query, id=id).fetchone()
+                result = conn.execute(query, {'id': id}).fetchone()
+                print(result)
                 if result is None:
                     return 'User not found', 404
                 photo = change_aspect_ratio_and_encode(result.profile_photo, 16/9)
@@ -291,12 +292,12 @@ def user_id(id: int):
         try:
             if 'accepted' in data:
                 update_query = text("UPDATE user_data SET accepted=:accepted WHERE id=:id AND approved='True'")
-                conn.execute(update_query, accepted=data['accepted'], id=id)
+                conn.execute(update_query, {'accepted': data['accepted'], 'id': id})
                 conn.commit()
                 return 'Foydalanuvchi qabul qilindi', 200
             if 'role' in data:
                 update_query = text("UPDATE user_data SET role=:role WHERE id=:id")
-                conn.execute(update_query, role=data['role'], id=id)
+                conn.execute(update_query, {'role': data['role'], 'id': id})
                 conn.commit()
                 return "Foydalanuvchining roli o'zgardi", 200
         except exc.StatementError as e:
@@ -306,11 +307,11 @@ def user_id(id: int):
         try:
             # Сначала удалим сообщения, связанные с пользователем
             delete_messages_query = text("DELETE FROM messages WHERE sender_id = :user_id OR receiver_id = :user_id")
-            conn.execute(delete_messages_query, user_id=id)
+            conn.execute(delete_messages_query, {'user_id': id})
 
             # Теперь удалим самого пользователя из таблицы user_data
             delete_user_query = text("DELETE FROM user_data WHERE id = :user_id")
-            conn.execute(delete_user_query, user_id=id)
+            conn.execute(delete_user_query, {'user_id': id})
 
             conn.commit()
             return "Foydalanuvchi o'chirildi", 200
@@ -376,7 +377,7 @@ def users():
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'GET':
             try:
@@ -405,7 +406,7 @@ def admin():
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'PATCH':
             try:
@@ -432,7 +433,7 @@ def logout(id: int):
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'GET':
             return "Tizimdan muvaffaqiyatli chiqildi", 200
@@ -448,15 +449,16 @@ def search():
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'POST':
             resumes = []
             data = request.json
             try:
                 if not data:
-                    search_query = "SELECT id, username, major, experience, skills, email, phone_number, resume FROM user_data"
-                    search_results = conn.execute(text(search_query)).fetchall()
+                    search_query = "SELECT id, username, major, experience, skills, email, phone_number, resume FROM user_data WHERE accepted = :boolean"
+                    params = {'boolean': True}
+                    search_results = conn.execute(text(search_query), params).fetchall()
                     result_list = [{'id': row[0], 'username': row[1], 'major': row[2], 'experience': row[3], 'skills': [skill.replace('"', '') for skill in row[4].split(',')] if row[4] is not None else [],
                                     'email': row[5], 'phone_number': [phone_number for phone_number in row[6].split(',')] if row[6] is not None else [], 'resume': row[7]} for row in search_results]
                     return jsonify({'results': result_list}), 200
@@ -501,7 +503,7 @@ def search_id(id: int):
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'GET':
             try:
@@ -541,7 +543,7 @@ def stat():
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'GET':
             try:
@@ -586,7 +588,7 @@ def chat(id: int):
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'POST':
             data = request.json
@@ -606,8 +608,8 @@ def chat(id: int):
                 conn.rollback()
                 return str(e), 400
         if request.method == 'GET':
-            query = text(f"SELECT profile_photo, id, username FROM user_data WHERE id != :user_id")
-            params = {'user_id': id}
+            query = text("SELECT profile_photo, id, username FROM user_data WHERE id != :user_id AND accepted = :boolean")
+            params = {'user_id': id, 'boolean': True}
             result = conn.execute(query, params).fetchall()
 
             messages = []
@@ -632,7 +634,7 @@ def chatroom():
     is_valid = check_user(current_user, user_id, user_role)
     
     if not is_valid:
-        return 'Invalid data', 401  # Возвращаем статус-код 401 и сообщение 'Invalid data'
+        return 'Invalid data', 401
     else:
         if request.method == 'GET':
             user_1 = request.args.get('user_id1')
@@ -833,5 +835,5 @@ def handle_disconnect():
             break
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='localhost', port=1000)
-    # socketio.run(app, debug=True, port=1000, host='0.0.0.0')
+    # socketio.run(app, debug=True, host='localhost', port=1000)
+    socketio.run(app, debug=True, port=1000, host='0.0.0.0')
