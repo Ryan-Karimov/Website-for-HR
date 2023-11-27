@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, text, exc
 from passlib.hash import bcrypt
 from forms import *
 from config import *
-import smtplib, uuid
+import smtplib, uuid, ast
 from flask_mail import Mail
 from flask_socketio import SocketIO
 import uuid
@@ -233,7 +233,6 @@ def user_id(id: int):
                 resume = encode_to_base64(user.resume)
                 formatted_timestamp = user.created_on.strftime("%d %b %Y")
                 degree_general = json.loads(user.degree_general) if user.degree_general else []
-                print(user.skills)
                 user_data = {
                     "message": "Avtorizatsiya muvaffaqiyatli amalga oshirildi",
                     "fullname": user.fullname,
@@ -298,7 +297,7 @@ def update(id: int):
     else:
         if request.method == 'PATCH':
             new_data = request.json
-            username = new_data['username']
+            username = conn.execute(text(f"SELECT username FROM user_data WHERE id = {id}")).fetchone()
             updated_data = {}
             try:
                 for key, value in new_data.items():
@@ -308,13 +307,11 @@ def update(id: int):
                         value = save_base64_image(value)
                     elif key == 'skills':
                         value = json.dumps(value)
-                        print(value)
                     elif key == 'resume':
                         value = save_base64_resume(value, username)
                     elif key == 'degree_general':
                         value = json.dumps(value)
                     updated_data[key] = value
-                print(updated_data)
                 statement = text(f"UPDATE user_data SET {', '.join([f'{key} = :{key}' for key in updated_data.keys()])} WHERE id = :id")
                 parameters = {**updated_data, "id": id}
                 conn.execute(statement, parameters)
@@ -344,7 +341,7 @@ def users():
         return 'Invalid data', 401
     else:
         try:
-            result = conn.execute(text("SELECT * FROM user_data"))
+            result = conn.execute(text("SELECT * FROM user_data WHERE role IS NOT NULL"))
             users = [dict(zip(result.keys(), row)) for row in result.fetchall()]
             all_users = []
             for user in users:
@@ -416,7 +413,7 @@ def search():
         print(data)
         try:
             if not data:
-                search_query_user_data = "SELECT id, username, major, experience, skills, email, phone_number, resume FROM user_data WHERE accepted = :boolean"
+                search_query_user_data = "SELECT id, username, major, experience, skills, email, resume, fullname FROM user_data WHERE accepted = :boolean"
                 search_results_user_data = conn.execute(text(search_query_user_data), {'boolean': True}).fetchall()
                 result_list_user_data = [{
                     'id': row[0],
@@ -425,31 +422,17 @@ def search():
                     'experience': row[3],
                     'skills': [skill.replace('"', '') for skill in row[4].split(',')] if row[4] is not None else [],
                     'email': row[5],
-                    'phone_number': [phone_number for phone_number in row[6].split(',')] if row[6] is not None else [],
-                    'resume': row[7]
+                    'resume': row[6],
+                    'fullname': row[7] if row[7] is not None else None
                 } for row in search_results_user_data]
-
-                search_query_cvs = "SELECT id, fullname, email, phone_number, major, skills, experience, resume FROM cvs"
-                search_results_cvs = conn.execute(text(search_query_cvs)).fetchall()
-                result_list_cvs = [{
-                    'id': row[0],
-                    'fullname': row[1],
-                    'major': row[4],  # Assuming 'major' is at index 4 in the 'cvs' table
-                    'experience': row[6],  # Assuming 'experience' is at index 6 in the 'cvs' table
-                    'skills': [skill.replace('"', '') for skill in row[5].split(',')] if row[5] is not None else [],
-                    'email': row[2],
-                    'phone_number': [phone_number for phone_number in row[3].split(',')] if row[3] is not None else [],
-                    'resume': row[7]
-                } for row in search_results_cvs]
-
-                result_list = result_list_user_data + result_list_cvs
-
-                return jsonify({'results': result_list}), 200
+                print(result_list_user_data)
+                return jsonify({'results': result_list_user_data}), 200
 
             
-            if any(key in data for key in ['skills', 'major', 'experience']):
+            if any(key in data for key in ['skills', 'major', 'experience', 'resumes']):
                 conditions = []
                 params = {}
+                resume_type = data.get('resumes', 'all')
 
                 if 'skills' in data:
                     skills = data['skills']
@@ -458,23 +441,41 @@ def search():
                     for idx, skill in enumerate(skills):
                         params["skill_" + str(idx)] = f"%{skill}%"
 
-                if 'major' in data:
+                elif 'major' in data:
                     conditions.append("major = :major")
                     params['major'] = data['major']
-                    
-                if 'experience' in data:
+
+                elif 'experience' in data:
                     conditions.append("experience = :experience")
                     params['experience'] = data['experience']
 
-                search_query = "SELECT DISTINCT id, username, major, experience, skills, email, phone_number, resume FROM user_data"
+                if resume_type == 'users':
+                    conditions.append("role IS NOT NULL")
+
+                elif resume_type == 'candidates':
+                    conditions.append("role IS NULL")
+
+                search_query = "SELECT DISTINCT id, username, major, experience, skills, email, phone_number, resume, fullname FROM user_data"
                 if conditions:
                     search_query += " WHERE " + " AND ".join(conditions)
 
+
                 search_results = conn.execute(text(search_query), params).fetchall()
-                result_list = [{'id': row[0], 'username': row[1], 'major': row[2], 'experience': row[3], 'skills': [skill.replace('"', '') for skill in row[4].split(',')] if row[4] is not None else [],
-                                'email': row[5], 'phone_number': [phone_number for phone_number in row[6].split(',')] if row[6] is not None else [], 'resume': row[7]} for row in search_results]
+                result_list = [
+                    {
+                        'id': row[0],
+                        'username': row[1],
+                        'major': row[2],
+                        'experience': row[3],
+                        'skills': row[4] if row[4] is not None else [],
+                        'email': row[5],
+                        'resume': row[7],
+                        'fullname': row[8] if row[8] else None
+                    } for row in search_results
+                ]
                 return jsonify({'results': result_list}), 200
-            return "Kalit so'z xato"
+
+            return "Invalid request data"
         except exc.StatementError as e:
             conn.rollback()
             return str(e), 400
@@ -667,7 +668,7 @@ def resumes():
                 data = request.json
                 fullname = data['fullname']
                 print(data)
-                existing_gmail = conn.execute(text("SELECT email FROM cvs WHERE email = :email"), {'email': data['email']}).fetchone()
+                existing_gmail = conn.execute(text("SELECT email FROM user_data WHERE email = :email"), {'email': data['email']}).fetchone()
                 if existing_gmail:
                     error = "Bu email band. Iltimos, boshqa elektron pochtadan foydalaning."
                     return error, 400
@@ -680,9 +681,8 @@ def resumes():
                     elif key == 'resume':
                         resume = save_base64_resume(value, username=fullname)
 
-                query = text("INSERT INTO user_data (id, fullname, email, address, phone_number, degree_general, major, skills, experience) VALUES (:id, :fullname, :email, :address, :phone_number, :degree_general, :major, :skills, :experience)")
+                query = text("INSERT INTO user_data (fullname, email, address, phone_number, degree_general, major, skills, experience, accepted, approved) VALUES (:fullname, :email, :address, :phone_number, :degree_general, :major, :skills, :experience, :accepted, :approved)")
                 params = {
-                    'id': str(uuid.uuid4()),
                     'fullname': data['fullname'],
                     'email': data['email'],
                     'address': data['address'],
@@ -691,7 +691,9 @@ def resumes():
                     'major': data['major'],
                     'skills': skills,
                     'experience': data['experience'],
-                    'resume': resume
+                    'resume': resume,
+                    'accepted': True,
+                    'approved': True
                 }
                 conn.execute(query, params)
                 conn.commit()
@@ -717,15 +719,18 @@ def change_password(id: int):
         return 'Invalid data', 401
     else:
         if request.method == 'POST':
-            old, new = request.json['old_password'], request.json['new_password']
+            data = request.get_json(force=True)
+            old_password = data.get('old_password')
+            new_password = bcrypt.hash(data.get('new_password'))
             query = conn.execute(text(f"SELECT password FROM user_data WHERE id = {id}")).fetchone()
-            is_valid = bcrypt.verify(old, query.password)
+            print(query)
+            is_valid = bcrypt.verify(old_password, query.password)
             if is_valid:
-                conn.execute(text("UPDATE user_data SET password=:value WHERE id=:user_id"), {'user_id': id, 'value': new})
+                conn.execute(text("UPDATE user_data SET password=:value WHERE id=:user_id"), {'user_id': id, 'value': new_password})
                 conn.commit()
-                return "Parol muvaffaqiyatli o'zgartirildi"
+                return "Parol muvaffaqiyatli o'zgartirildi", 200
             else:
-                return "Parol mos kelmadi"
+                return "Parol mos kelmadi", 400
 
 connected_users = {}  # Используйте словарь для хранения соответствия user_id и session_id
 

@@ -192,3 +192,7 @@ def check_user(current_user, user_id, user_role):
         return False
     else:
         return True
+    
+def clean_skills_list(skill_list):
+    cleaned_list = [skill.strip("[").strip("]") for skill in skill_list]
+    return cleaned_list
